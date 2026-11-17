@@ -81,6 +81,7 @@ function AppContent() {
   useEffect(() => {
     setAuthToken(session?.token ?? null);
     setOnUnauthorized(() => {
+      setAuthToken(null);
       setSession(null);
       setCart([]);
       showToast('Session expired or revoked. Please sign in again.', 'error', 'Authentication');
@@ -326,7 +327,14 @@ function AppContent() {
   };
 
   if (!session) {
-    return <RoleAuthPortal onLoginSuccess={(u) => setSession(u)} />;
+    return (
+      <RoleAuthPortal
+        onLoginSuccess={(u) => {
+          setAuthToken(u.token ?? null);
+          setSession(u);
+        }}
+      />
+    );
   }
 
   const cashierProfile: CashierProfile = {
@@ -476,7 +484,8 @@ function AppContent() {
             </div>
             <button
               onClick={() => {
-                apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+                void apiFetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+                setAuthToken(null);
                 setSession(null);
                 setCart([]);
                 setOverrideBy(null);

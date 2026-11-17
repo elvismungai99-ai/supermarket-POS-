@@ -1,7 +1,7 @@
 import type { ReceiptDto } from '../components/ReceiptModal';
 import { apiFetch } from './apiClient';
 
-export const HARDWARE_AGENT_URL = 'http://127.0.0.1:9001';
+export const HARDWARE_AGENT_URL = import.meta.env.DEV ? '/hw-agent' : 'http://127.0.0.1:9001';
 const OFFLINE_QUEUE_KEY = 'kenya_pos_offline_sales_v1';
 const CATALOG_CACHE_KEY = 'kenya_pos_catalog_cache_v1';
 const HW_TOKEN_KEY = 'supermart_hw_token';

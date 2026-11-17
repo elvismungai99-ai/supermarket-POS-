@@ -23,6 +23,28 @@ function createBackendProxy(): ProxyOptions {
   }
 }
 
+function createHardwareAgentProxy(): ProxyOptions {
+  return {
+    target: 'http://127.0.0.1:9001',
+    changeOrigin: true,
+    rewrite: (path) => path.replace(/^\/hw-agent/, ''),
+    configure: (proxy) => {
+      proxy.on('error', (err, req, res) => {
+        if ('writeHead' in res && !res.headersSent) {
+          const isHealth = req.url === '/health' || req.url === '/hw-agent/health';
+          res.writeHead(isHealth ? 200 : 503, { 'Content-Type': 'application/json' });
+          res.end(
+            JSON.stringify({
+              status: 'DOWN',
+              message: `Hardware agent (:9001) is offline (${err.message}).`,
+            })
+          );
+        }
+      });
+    },
+  };
+}
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -34,6 +56,7 @@ export default defineConfig({
     proxy: {
       '/api': createBackendProxy(),
       '/actuator': createBackendProxy(),
+      '/hw-agent': createHardwareAgentProxy(),
     },
   },
 })
