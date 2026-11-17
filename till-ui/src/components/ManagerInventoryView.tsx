@@ -196,8 +196,8 @@ export function ManagerInventoryView() {
       setMsg({ type: 'success', text: `Product "${p.name}" updated successfully.` });
       setEditingId(null);
       fetchInventory();
-    } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'Error updating product' });
+    } catch (err: unknown) {
+      setMsg({ type: 'error', text: err instanceof Error ? err.message : 'Error updating product' });
     }
   };
 
@@ -219,8 +219,8 @@ export function ManagerInventoryView() {
       if (!res.ok) throw new Error('Quick restock failed');
       setMsg({ type: 'success', text: `Restocked "${p.name}" by +${delta} units (new stock: ${updatedQty}).` });
       fetchInventory();
-    } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'Error restocking product' });
+    } catch (err: unknown) {
+      setMsg({ type: 'error', text: err instanceof Error ? err.message : 'Error restocking product' });
     }
   };
 
@@ -301,8 +301,8 @@ export function ManagerInventoryView() {
       setRecBatchNo('');
       setRecExpiryDate('');
       fetchInventory();
-    } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'Error receiving stock' });
+    } catch (err: unknown) {
+      setMsg({ type: 'error', text: err instanceof Error ? err.message : 'Error receiving stock' });
     }
   };
 
@@ -319,8 +319,8 @@ export function ManagerInventoryView() {
             : `ERPNext Purchase Invoice sync failed: ${updated.errorMessage || 'Unknown error'}`,
       });
       fetchInventory();
-    } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'Failed to sync receipt to ERPNext' });
+    } catch (err: unknown) {
+      setMsg({ type: 'error', text: err instanceof Error ? err.message : 'Failed to sync receipt to ERPNext' });
     }
   };
 
@@ -349,8 +349,8 @@ export function ManagerInventoryView() {
       setNewCostPrice('0');
       setNewBarcode('');
       fetchInventory();
-    } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'Error creating product' });
+    } catch (err: unknown) {
+      setMsg({ type: 'error', text: err instanceof Error ? err.message : 'Error creating product' });
     }
   };
 

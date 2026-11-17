@@ -106,8 +106,8 @@ export function ReturnsView({
       setSaleId('');
       setReceiptNumber('');
       loadData();
-    } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'Error processing return' });
+    } catch (err: unknown) {
+      setMsg({ type: 'error', text: err instanceof Error ? err.message : 'Error processing return' });
     } finally {
       setSubmitting(false);
     }

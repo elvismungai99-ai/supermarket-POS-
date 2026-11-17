@@ -4,6 +4,17 @@ import { useToast } from '../utils/toast';
 
 type ManagerTab = 'CASHIERS' | 'INVENTORY' | 'RETURNS';
 
+interface CashierStatusSummary {
+  status: string;
+  isOnline: boolean;
+}
+
+interface DailySalesEntry {
+  date: string;
+  totalRevenueKes: number;
+  totalSalesCount: number;
+}
+
 interface ManagerDashboardHeaderProps {
   activeTab: ManagerTab;
   onSelectTab: (tab: ManagerTab) => void;
@@ -38,23 +49,23 @@ export function ManagerDashboardHeader({
       ]);
 
       if (cashiersRes.ok) {
-        const cashiers = await cashiersRes.json();
+        const cashiers = (await cashiersRes.json()) as CashierStatusSummary[];
         if (Array.isArray(cashiers)) {
-          setPendingApprovals(cashiers.filter((c: any) => c.status === 'PENDING_APPROVAL').length);
-          setActiveShifts(cashiers.filter((c: any) => c.isOnline).length);
+          setPendingApprovals(cashiers.filter((c) => c.status === 'PENDING_APPROVAL').length);
+          setActiveShifts(cashiers.filter((c) => c.isOnline).length);
         }
       }
 
       if (lowStockRes.ok) {
-        const low = await lowStockRes.json();
+        const low = (await lowStockRes.json()) as unknown[];
         if (Array.isArray(low)) setLowStockCount(low.length);
       }
 
       if (salesRes.ok) {
-        const days = await salesRes.json();
+        const days = (await salesRes.json()) as DailySalesEntry[];
         if (Array.isArray(days) && days.length > 0) {
           const todayIso = new Date().toISOString().slice(0, 10);
-          const todayEntry = days.find((d: any) => d.date === todayIso) || days[0];
+          const todayEntry = days.find((d) => d.date === todayIso) || days[0];
           setGrossSalesToday(Number(todayEntry.totalRevenueKes || 0));
           setTransactionsToday(Number(todayEntry.totalSalesCount || 0));
         }

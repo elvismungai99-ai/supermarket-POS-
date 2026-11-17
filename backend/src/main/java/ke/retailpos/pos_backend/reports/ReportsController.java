@@ -1,5 +1,6 @@
 package ke.retailpos.pos_backend.reports;
 
+import jakarta.validation.Valid;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
@@ -176,7 +177,7 @@ public class ReportsController {
   }
 
   @PostMapping("/tax-payments")
-  public ResponseEntity<?> recordTaxPayment(@RequestBody MonthlyTaxService.RecordTaxPaymentRequest request) {
+  public ResponseEntity<?> recordTaxPayment(@Valid @RequestBody MonthlyTaxService.RecordTaxPaymentRequest request) {
     if (monthlyTaxService == null) {
       return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("message", "MonthlyTaxService unavailable"));
     }

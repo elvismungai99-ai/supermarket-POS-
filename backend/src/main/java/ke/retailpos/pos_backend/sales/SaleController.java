@@ -1,5 +1,6 @@
 package ke.retailpos.pos_backend.sales;
 
+import jakarta.validation.Valid;
 import java.util.UUID;
 import ke.retailpos.pos_backend.audit.AuditLogService;
 import ke.retailpos.pos_backend.config.AuthenticatedUser;
@@ -18,7 +19,7 @@ public class SaleController {
   }
 
   @PostMapping
-  public ResponseEntity<?> createSale(@RequestBody CreateSaleRequest request) {
+  public ResponseEntity<?> createSale(@Valid @RequestBody CreateSaleRequest request) {
     try {
       CreateSaleRequest effective = request;
       AuthenticatedUser actor = AuditLogService.currentActor();

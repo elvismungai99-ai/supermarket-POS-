@@ -151,8 +151,8 @@ export function AccountingErpNextView() {
       }
       loadSummary(selectedDate);
       loadMeta();
-    } catch (err: any) {
-      setAlertMsg({ type: 'error', text: err.message || 'Failed to trigger ERPNext posting' });
+    } catch (err: unknown) {
+      setAlertMsg({ type: 'error', text: err instanceof Error ? err.message : 'Failed to trigger ERPNext posting' });
     } finally {
       setActionLoading(false);
     }
@@ -182,8 +182,8 @@ export function AccountingErpNextView() {
       const res = await apiFetch('/api/accounting/test-connection', { method: 'POST' });
       const json = await res.json();
       setTestResult(json);
-    } catch (err: any) {
-      setTestResult({ connected: false, message: err.message || 'Connection ping failed' });
+    } catch (err: unknown) {
+      setTestResult({ connected: false, message: err instanceof Error ? err.message : 'Connection ping failed' });
     }
   };
 
@@ -193,8 +193,12 @@ export function AccountingErpNextView() {
       const res = await apiFetch('/api/accounting/verify-accounts', { method: 'POST' });
       const json = await res.json();
       setVerifyResult(json);
-    } catch (err: any) {
-      setVerifyResult({ reachable: false, missingAccounts: [], message: err.message || 'COA verification failed' });
+    } catch (err: unknown) {
+      setVerifyResult({
+        reachable: false,
+        missingAccounts: [],
+        message: err instanceof Error ? err.message : 'COA verification failed',
+      });
     }
   };
 

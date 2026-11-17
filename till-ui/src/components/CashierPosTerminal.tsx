@@ -283,8 +283,8 @@ export function CashierPosTerminal({
       }
       setKeypadBuffer('');
       setOverrideModal(null);
-    } catch (err: any) {
-      setSupError(err.message || 'Supervisor PIN rejected');
+    } catch (err: unknown) {
+      setSupError(err instanceof Error ? err.message : 'Supervisor PIN rejected');
     } finally {
       setSupLoading(false);
     }

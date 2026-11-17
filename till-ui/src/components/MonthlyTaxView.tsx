@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { apiFetch, downloadAuthenticatedFile } from '../utils/apiClient';
+import { useCallback, useState } from 'react';
+import { downloadAuthenticatedFile } from '../utils/apiClient';
+import { useMonthlyTax } from '../hooks/useMonthlyTax';
 import { useToast } from '../utils/toast';
 
 export interface MonthlyTaxSummary {
@@ -96,9 +97,8 @@ function statusBadgeClass(status: MonthlyTaxSummary['status']): string {
 export function MonthlyTaxView({ canRecordPayment = true }: { canRecordPayment?: boolean }) {
   const { showToast } = useToast();
   const [selectedMonth, setSelectedMonth] = useState<string>(defaultCurrentMonth);
-  const [report, setReport] = useState<MonthlyTaxReportResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
+  const handleTaxError = useCallback((msg: string) => showToast(msg, 'error'), [showToast]);
+  const { report, loading, submitting, reload, recordPayment } = useMonthlyTax(selectedMonth, handleTaxError);
 
   // Record KRA Tax Payment form
   const [payPeriod, setPayPeriod] = useState<string>(defaultCurrentMonth);
@@ -108,27 +108,6 @@ export function MonthlyTaxView({ canRecordPayment = true }: { canRecordPayment?:
   const [payMethod, setPayMethod] = useState<string>('KRA_ITAX_MPESA');
   const [payPrn, setPayPrn] = useState<string>('');
   const [payNotes, setPayNotes] = useState<string>('');
-
-  const loadReport = async (month: string) => {
-    setLoading(true);
-    try {
-      const res = await apiFetch(`/api/reports/monthly-tax?month=${encodeURIComponent(month)}`);
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
-        throw new Error(err.message || 'Failed to load monthly tax calculation');
-      }
-      const data: MonthlyTaxReportResponse = await res.json();
-      setReport(data);
-    } catch (err: any) {
-      showToast(err.message || 'Could not load monthly tax report', 'error');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadReport(selectedMonth);
-  }, [selectedMonth]);
 
   const handleMonthChange = (m: string) => {
     if (!m) return;
@@ -143,32 +122,20 @@ export function MonthlyTaxView({ canRecordPayment = true }: { canRecordPayment?:
       showToast('Enter a positive payment amount in KES.', 'error');
       return;
     }
-    setSubmitting(true);
-    try {
-      const res = await apiFetch('/api/reports/tax-payments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          taxPeriod: payPeriod,
-          taxType: payType,
-          amountPaidKes: amt,
-          paymentDate: payDate,
-          paymentMethod: payMethod,
-          kraPrn: payPrn.trim(),
-          notes: payNotes.trim() || null,
-        }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.message || 'Failed to record KRA tax payment');
+    const ok = await recordPayment({
+      taxPeriod: payPeriod,
+      taxType: payType,
+      amountPaidKes: amt,
+      paymentDate: payDate,
+      paymentMethod: payMethod,
+      kraPrn: payPrn.trim(),
+      notes: payNotes.trim() || null,
+    });
+    if (ok) {
       showToast(`Recorded KES ${fmtKes(amt)} tax payment for ${payPeriod} (PRN: ${payPrn.trim()}).`, 'success');
       setPayAmount('');
       setPayPrn('');
       setPayNotes('');
-      await loadReport(selectedMonth);
-    } catch (err: any) {
-      showToast(err.message || 'Error saving tax remittance', 'error');
-    } finally {
-      setSubmitting(false);
     }
   };
 
@@ -198,7 +165,7 @@ export function MonthlyTaxView({ canRecordPayment = true }: { canRecordPayment?:
           />
           <button
             type="button"
-            onClick={() => loadReport(selectedMonth)}
+            onClick={() => void reload()}
             className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold border border-slate-700 transition"
           >
             ↻ Recalculate

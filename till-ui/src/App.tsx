@@ -224,14 +224,14 @@ function AppContent() {
           : `Added ${product.name}`,
         'success'
       );
-    } catch (err: any) {
+    } catch (err: unknown) {
       // Offline IndexedDB / localStorage catalog fallback
       const cached = findCachedProductByBarcode(barcode);
       if (cached) {
         handleSelectProduct(cached);
         showToast(`Offline catalog hit: ${cached.name}`, 'info');
       } else {
-        setError(err?.message || 'Failed to connect to backend server');
+        setError(err instanceof Error ? err.message : 'Failed to connect to backend server');
       }
     } finally {
       setLoading(false);

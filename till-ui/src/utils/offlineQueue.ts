@@ -11,7 +11,7 @@ const IDB_VERSION = 1;
 export interface OfflineQueuedSale {
   clientSaleId: string;
   queuedAt: string;
-  payload: any;
+  payload: Record<string, unknown>;
   totalKes: number;
   integrityTag?: string;
 }

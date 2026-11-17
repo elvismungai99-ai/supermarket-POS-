@@ -107,8 +107,8 @@ export function SuperAdminView({ authToken }: SuperAdminViewProps) {
       if (!res.ok) throw new Error(data.message || 'Failed to initiate MFA setup');
       setMfaSetup({ secret: data.secret, otpAuthUri: data.otpAuthUri });
       showToast('Scan or copy the TOTP secret into your authenticator app, then verify.', 'info');
-    } catch (err: any) {
-      showToast(err.message || 'Failed to setup MFA', 'error');
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to setup MFA', 'error');
     } finally {
       setMfaBusy(false);
     }
@@ -129,8 +129,8 @@ export function SuperAdminView({ authToken }: SuperAdminViewProps) {
       setMfaSetup(null);
       setMfaCode('');
       showToast('Two-Factor Authentication enabled for your account.', 'success');
-    } catch (err: any) {
-      showToast(err.message || 'MFA activation failed', 'error');
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'MFA activation failed', 'error');
     } finally {
       setMfaBusy(false);
     }
@@ -150,8 +150,8 @@ export function SuperAdminView({ authToken }: SuperAdminViewProps) {
       setMfaEnabledLocal(false);
       setMfaDisablePin('');
       showToast('Two-Factor Authentication disabled.', 'info');
-    } catch (err: any) {
-      showToast(err.message || 'Could not disable MFA', 'error');
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Could not disable MFA', 'error');
     } finally {
       setMfaBusy(false);
     }
@@ -206,8 +206,8 @@ export function SuperAdminView({ authToken }: SuperAdminViewProps) {
       setProvUsername('');
       setProvPin('');
       loadData();
-    } catch (err: any) {
-      showToast(err.message || 'Failed to provision user', 'error');
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Failed to provision user', 'error');
     }
   };
 
@@ -229,8 +229,8 @@ export function SuperAdminView({ authToken }: SuperAdminViewProps) {
       setShopName('');
       setShopLocation('');
       loadData();
-    } catch (err: any) {
-      showToast(err.message || 'Branch creation failed', 'error');
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Branch creation failed', 'error');
     }
   };
 
@@ -394,7 +394,7 @@ export function SuperAdminView({ authToken }: SuperAdminViewProps) {
                   />
                   <select
                     value={provRole}
-                    onChange={(e) => setProvRole(e.target.value as any)}
+                    onChange={(e) => setProvRole(e.target.value as 'SUPERVISOR' | 'SUPER_ADMIN' | 'CASHIER')}
                     className="px-3 py-2 rounded-xl bg-slate-950 border border-slate-700 text-white"
                   >
                     <option value="SUPERVISOR">Store Manager (SUPERVISOR)</option>

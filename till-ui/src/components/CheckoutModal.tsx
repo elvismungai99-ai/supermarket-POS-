@@ -199,11 +199,13 @@ export function CheckoutModal({
 
       const receipt: ReceiptDto = await res.json();
       onSuccess(receipt);
-    } catch (err: any) {
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err || '');
+      const name = err instanceof Error ? err.name : '';
       const isNetworkFailure =
-        err?.message === '__OFFLINE_FALLBACK__' ||
-        err?.name === 'TypeError' ||
-        String(err?.message || '').toLowerCase().includes('fetch');
+        msg === '__OFFLINE_FALLBACK__' ||
+        name === 'TypeError' ||
+        msg.toLowerCase().includes('fetch');
 
       if (isNetworkFailure && paymentMethod === 'CASH') {
         enqueueOfflineSale({
@@ -246,7 +248,7 @@ export function CheckoutModal({
         return;
       }
 
-      setError(err.message || 'Payment processing failed');
+      setError(msg || 'Payment processing failed');
       setStkStatus(null);
     } finally {
       setLoading(false);

@@ -85,8 +85,8 @@ export function RoleAuthPortal({ onLoginSuccess }: RoleAuthPortalProps) {
       }
 
       onLoginSuccess(data);
-    } catch (err: any) {
-      setError(err.message || 'Network error connecting to auth service');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Network error connecting to auth service');
     } finally {
       setLoading(false);
     }
@@ -134,8 +134,8 @@ export function RoleAuthPortal({ onLoginSuccess }: RoleAuthPortalProps) {
       setRegName('');
       setRegUsername('');
       setRegPin('');
-    } catch (err: any) {
-      setError(err.message || 'Failed to register account');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to register account');
     } finally {
       setLoading(false);
     }

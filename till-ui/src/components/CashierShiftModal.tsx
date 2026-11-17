@@ -68,8 +68,8 @@ export function CashierShiftModal({
       if (!currentShift) {
         setMode('OPEN_SHIFT');
       }
-    } catch (err: any) {
-      setError(err.message || 'Login failed');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Login failed');
     } finally {
       setLoading(false);
     }
@@ -96,8 +96,8 @@ export function CashierShiftModal({
       }
       const shift: ShiftInfo = await res.json();
       onOpenShiftSuccess(shift);
-    } catch (err: any) {
-      setError(err.message || 'Failed to open shift');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to open shift');
     } finally {
       setLoading(false);
     }
@@ -122,8 +122,8 @@ export function CashierShiftModal({
         throw new Error(data.message || 'Failed to close shift');
       }
       onCloseShiftSuccess();
-    } catch (err: any) {
-      setError(err.message || 'Failed to close shift');
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to close shift');
     } finally {
       setLoading(false);
     }

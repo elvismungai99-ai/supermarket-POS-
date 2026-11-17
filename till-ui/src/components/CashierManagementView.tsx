@@ -62,8 +62,8 @@ export function CashierManagementView() {
         text: `Cashier "${cashier.name}" (@${cashier.username}) has been authorized! They can now log in.`,
       });
       loadCashiers();
-    } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'Error authorizing cashier' });
+    } catch (err: unknown) {
+      setMsg({ type: 'error', text: err instanceof Error ? err.message : 'Error authorizing cashier' });
     }
   };
 
@@ -87,8 +87,8 @@ export function CashierManagementView() {
       setResetTarget(null);
       setNewPin('');
       loadCashiers();
-    } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'Error resetting PIN' });
+    } catch (err: unknown) {
+      setMsg({ type: 'error', text: err instanceof Error ? err.message : 'Error resetting PIN' });
     } finally {
       setResetting(false);
     }
@@ -111,8 +111,8 @@ export function CashierManagementView() {
       });
       setDeleteTarget(null);
       loadCashiers();
-    } catch (err: any) {
-      setMsg({ type: 'error', text: err.message || 'Error deleting cashier' });
+    } catch (err: unknown) {
+      setMsg({ type: 'error', text: err instanceof Error ? err.message : 'Error deleting cashier' });
     } finally {
       setDeleting(false);
     }

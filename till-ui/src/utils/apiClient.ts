@@ -13,6 +13,12 @@ export function setOnUnauthorized(handler: (() => void) | null) {
   unauthorizedHandler = handler;
 }
 
+export function getErrorMessage(err: unknown, fallback = 'An unexpected error occurred'): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === 'string' && err) return err;
+  return fallback;
+}
+
 export async function apiFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers || {});
   if (currentAuthToken && !headers.has('Authorization')) {

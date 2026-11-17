@@ -1,5 +1,8 @@
 package ke.retailpos.pos_backend.reports;
 
+import jakarta.validation.constraints.DecimalMin;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Instant;
@@ -107,12 +110,12 @@ public class MonthlyTaxService {
   ) {}
 
   public record RecordTaxPaymentRequest(
-      String taxPeriod,
+      @NotBlank String taxPeriod,
       String taxType,
-      BigDecimal amountPaidKes,
+      @NotNull @DecimalMin("0.01") BigDecimal amountPaidKes,
       LocalDate paymentDate,
       String paymentMethod,
-      String kraPrn,
+      @NotBlank String kraPrn,
       String notes
   ) {}
 
