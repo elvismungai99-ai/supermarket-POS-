@@ -19,6 +19,7 @@ import ke.retailpos.pos_backend.product.ProductRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
@@ -32,6 +33,7 @@ public class StockReceivingController {
   private final ErpNextClient erpNextClient;
   private final ProductBatchRepository batchRepository;
   private final AuditLogService auditLogService;
+  private final JdbcTemplate jdbcTemplate;
 
   public StockReceivingController(
       StockReceiptRepository receipts,
@@ -39,7 +41,18 @@ public class StockReceivingController {
       AccountingService accountingService,
       ErpNextClient erpNextClient
   ) {
-    this(receipts, products, accountingService, erpNextClient, null, null);
+    this(receipts, products, accountingService, erpNextClient, null, null, null);
+  }
+
+  public StockReceivingController(
+      StockReceiptRepository receipts,
+      ProductRepository products,
+      AccountingService accountingService,
+      ErpNextClient erpNextClient,
+      ProductBatchRepository batchRepository,
+      AuditLogService auditLogService
+  ) {
+    this(receipts, products, accountingService, erpNextClient, batchRepository, auditLogService, null);
   }
 
   @Autowired
@@ -49,7 +62,8 @@ public class StockReceivingController {
       AccountingService accountingService,
       ErpNextClient erpNextClient,
       ProductBatchRepository batchRepository,
-      AuditLogService auditLogService
+      AuditLogService auditLogService,
+      JdbcTemplate jdbcTemplate
   ) {
     this.receipts = receipts;
     this.products = products;
@@ -57,12 +71,21 @@ public class StockReceivingController {
     this.erpNextClient = erpNextClient;
     this.batchRepository = batchRepository;
     this.auditLogService = auditLogService;
+    this.jdbcTemplate = jdbcTemplate;
   }
+
+  public record NewProductInput(
+      @NotBlank String name,
+      @NotNull @DecimalMin("0.01") BigDecimal priceKes,
+      @NotBlank String taxCategory,
+      @NotBlank String barcode,
+      BigDecimal reorderLevel
+  ) {}
 
   public record ReceiveStockRequest(
       @NotBlank String supplierName,
       String supplierInvoiceNo,
-      @NotNull UUID productId,
+      UUID productId,
       @NotNull @DecimalMin("0.001") BigDecimal quantity,
       @NotNull @DecimalMin("0.00") BigDecimal unitCostKes,
       BigDecimal vatRate,
@@ -70,7 +93,8 @@ public class StockReceivingController {
       String notes,
       boolean postToErpNext,
       String batchNumber,
-      LocalDate expiryDate
+      LocalDate expiryDate,
+      @Valid NewProductInput newProduct
   ) {
     public ReceiveStockRequest(
         String supplierName,
@@ -83,7 +107,23 @@ public class StockReceivingController {
         String notes,
         boolean postToErpNext
     ) {
-      this(supplierName, supplierInvoiceNo, productId, quantity, unitCostKes, vatRate, receivedBy, notes, postToErpNext, null, null);
+      this(supplierName, supplierInvoiceNo, productId, quantity, unitCostKes, vatRate, receivedBy, notes, postToErpNext, null, null, null);
+    }
+
+    public ReceiveStockRequest(
+        String supplierName,
+        String supplierInvoiceNo,
+        UUID productId,
+        BigDecimal quantity,
+        BigDecimal unitCostKes,
+        BigDecimal vatRate,
+        UUID receivedBy,
+        String notes,
+        boolean postToErpNext,
+        String batchNumber,
+        LocalDate expiryDate
+    ) {
+      this(supplierName, supplierInvoiceNo, productId, quantity, unitCostKes, vatRate, receivedBy, notes, postToErpNext, batchNumber, expiryDate, null);
     }
   }
 
@@ -162,9 +202,52 @@ public class StockReceivingController {
   @PostMapping("/receive")
   @Transactional
   public ResponseEntity<?> receiveStock(@Valid @RequestBody ReceiveStockRequest req) {
-    Product product = products.findById(req.productId()).orElse(null);
-    if (product == null) {
-      return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Product not found");
+    Product product;
+    if (req.productId() != null) {
+      product = products.findById(req.productId()).orElse(null);
+      if (product == null) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Product not found");
+      }
+    } else if (req.newProduct() != null) {
+      NewProductInput np = req.newProduct();
+      String barcode = np.barcode().trim();
+      var existingByBarcode = products.findByBarcode(barcode);
+      if (existingByBarcode.isPresent()) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+            .body("Barcode '" + barcode + "' already belongs to '" + existingByBarcode.get().getName() + "'. Select it from the product list instead.");
+      }
+
+      BigDecimal reorder = np.reorderLevel() != null ? np.reorderLevel() : new BigDecimal("10.000");
+      BigDecimal unitCost = req.unitCostKes().setScale(2, RoundingMode.HALF_UP);
+      Product createdProduct = new Product(
+          UUID.randomUUID(),
+          np.name().trim(),
+          np.priceKes().setScale(2, RoundingMode.HALF_UP),
+          np.taxCategory().trim().toUpperCase(),
+          true,
+          BigDecimal.ZERO,
+          reorder,
+          unitCost
+      );
+      product = products.saveAndFlush(createdProduct);
+
+      if (jdbcTemplate != null) {
+        jdbcTemplate.update(
+            "INSERT INTO product_barcode (barcode, product_id) VALUES (?, ?) ON CONFLICT (barcode) DO UPDATE SET product_id = excluded.product_id",
+            barcode, product.getId()
+        );
+      }
+
+      if (auditLogService != null) {
+        auditLogService.record(
+            "PRODUCT_CREATED",
+            "product",
+            product.getId().toString(),
+            "Created during GRN stock receiving: " + product.getName() + " (barcode=" + barcode + ", price=" + product.getPriceKes() + ")"
+        );
+      }
+    } else {
+      return ResponseEntity.badRequest().body("Either productId or newProduct details must be provided.");
     }
 
     BigDecimal newStock = product.getStockQuantity().add(req.quantity());

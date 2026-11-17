@@ -100,4 +100,44 @@ class StockReceivingControllerTest {
     ResponseEntity<?> resp = controller.receiveStock(req);
     assertEquals(HttpStatus.NOT_FOUND, resp.getStatusCode());
   }
+
+  @Test
+  void testReceiveStockWithNewProductCreatesCatalogItemAndAddsExactQuantity() {
+    when(products.findByBarcode("616110009999")).thenReturn(Optional.empty());
+    when(products.saveAndFlush(any(Product.class))).thenAnswer(inv -> inv.getArgument(0));
+    when(erpNextClient.postPurchaseInvoice(any(), any(), any(), any()))
+        .thenReturn(new ErpNextClient.ErpNextResponse(false, null, "Offline", 503));
+
+    StockReceivingController.NewProductInput np = new StockReceivingController.NewProductInput(
+        "Pembe Maize Flour 2kg",
+        new BigDecimal("185.00"),
+        "B",
+        "616110009999",
+        new BigDecimal("15.000")
+    );
+    StockReceivingController.ReceiveStockRequest req = new StockReceivingController.ReceiveStockRequest(
+        "Pembe Millers Ltd",
+        "INV-PM-88",
+        null,
+        new BigDecimal("40.000"),
+        new BigDecimal("150.00"),
+        BigDecimal.ZERO,
+        null,
+        null,
+        false,
+        "BATCH-PM-01",
+        null,
+        np
+    );
+
+    ResponseEntity<?> resp = controller.receiveStock(req);
+    assertEquals(HttpStatus.CREATED, resp.getStatusCode());
+    StockReceivingController.StockReceiptDto dto = (StockReceivingController.StockReceiptDto) resp.getBody();
+    assertNotNull(dto);
+    assertEquals("Pembe Maize Flour 2kg", dto.productName());
+    assertEquals(new BigDecimal("40.000"), dto.quantity());
+    assertEquals(new BigDecimal("6000.00"), dto.totalCostKes());
+    verify(products).saveAndFlush(argThat(p -> "Pembe Maize Flour 2kg".equals(p.getName()) && "B".equals(p.getTaxCategory())));
+    verify(products).save(argThat(p -> new BigDecimal("40.000").compareTo(p.getStockQuantity()) == 0));
+  }
 }

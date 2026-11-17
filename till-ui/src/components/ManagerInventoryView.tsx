@@ -59,6 +59,14 @@ export function ManagerInventoryView() {
   const [recSupplier, setRecSupplier] = useState('');
   const [recInvoiceNo, setRecInvoiceNo] = useState('');
   const [recProductId, setRecProductId] = useState('');
+  const [recProductQuery, setRecProductQuery] = useState('');
+  const [recDropdownOpen, setRecDropdownOpen] = useState(false);
+  const [recCreatingNew, setRecCreatingNew] = useState(false);
+  const [recNewName, setRecNewName] = useState('');
+  const [recNewBarcode, setRecNewBarcode] = useState('');
+  const [recNewPrice, setRecNewPrice] = useState('');
+  const [recNewTaxCat, setRecNewTaxCat] = useState('A');
+  const [recNewReorder, setRecNewReorder] = useState('10');
   const [recQty, setRecQty] = useState('10');
   const [recUnitCost, setRecUnitCost] = useState('');
   const [recVatRate, setRecVatRate] = useState('0.16');
@@ -137,9 +145,8 @@ export function ManagerInventoryView() {
         apiFetch('/api/inventory/expiring?days=14'),
       ]);
       if (prodRes.ok) {
-        const list = await prodRes.json();
+        const list: ProductItem[] = await prodRes.json();
         setProducts(list);
-        if (!recProductId && list.length > 0) setRecProductId(list[0].id);
       }
       if (lowRes.ok) {
         setLowStock(await lowRes.json());
@@ -219,33 +226,77 @@ export function ManagerInventoryView() {
 
   const handleReceiveStock = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!recCreatingNew && !recProductId) {
+      setMsg({
+        type: 'error',
+        text: 'Select an existing product from the dropdown or click "+ Add as New Product" to create it.',
+      });
+      return;
+    }
+    if (recCreatingNew && (!recNewName.trim() || !recNewBarcode.trim() || !recNewPrice)) {
+      setMsg({ type: 'error', text: 'Enter name, barcode/SKU, and retail selling price for the new product.' });
+      return;
+    }
+
     try {
+      const payload = recCreatingNew
+        ? {
+            supplierName: recSupplier,
+            supplierInvoiceNo: recInvoiceNo || null,
+            productId: null,
+            newProduct: {
+              name: recNewName.trim(),
+              priceKes: parseFloat(recNewPrice),
+              taxCategory: recNewTaxCat,
+              barcode: recNewBarcode.trim(),
+              reorderLevel: parseFloat(recNewReorder) || 10,
+            },
+            quantity: parseFloat(recQty),
+            unitCostKes: parseFloat(recUnitCost),
+            vatRate: parseFloat(recVatRate),
+            postToErpNext: recPostErpNext,
+            batchNumber: recBatchNo || null,
+            expiryDate: recExpiryDate || null,
+          }
+        : {
+            supplierName: recSupplier,
+            supplierInvoiceNo: recInvoiceNo || null,
+            productId: recProductId,
+            quantity: parseFloat(recQty),
+            unitCostKes: parseFloat(recUnitCost),
+            vatRate: parseFloat(recVatRate),
+            postToErpNext: recPostErpNext,
+            batchNumber: recBatchNo || null,
+            expiryDate: recExpiryDate || null,
+          };
+
       const res = await apiFetch('/api/inventory/receive', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          supplierName: recSupplier,
-          supplierInvoiceNo: recInvoiceNo || null,
-          productId: recProductId,
-          quantity: parseFloat(recQty),
-          unitCostKes: parseFloat(recUnitCost),
-          vatRate: parseFloat(recVatRate),
-          postToErpNext: recPostErpNext,
-          batchNumber: recBatchNo || null,
-          expiryDate: recExpiryDate || null,
-        }),
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error('Failed to record stock receipt');
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        throw new Error(errText || 'Failed to record stock receipt');
+      }
       const created: StockReceiptItem = await res.json();
       setMsg({
         type: 'success',
-        text: `Received ${created.quantity} units of "${created.productName}" (Batch ${created.batchNumber || 'auto'}).${
+        text: `${recCreatingNew ? 'Created product & received' : 'Received'} ${created.quantity} units of "${created.productName}" (Batch ${created.batchNumber || 'auto'}).${
           created.erpnextPurchaseInvoiceId ? ` ERPNext Purchase Invoice: ${created.erpnextPurchaseInvoiceId}` : ''
         }`,
       });
       setShowReceiveModal(false);
       setRecSupplier('');
       setRecInvoiceNo('');
+      setRecProductId('');
+      setRecProductQuery('');
+      setRecCreatingNew(false);
+      setRecNewName('');
+      setRecNewBarcode('');
+      setRecNewPrice('');
+      setRecNewTaxCat('A');
+      setRecNewReorder('10');
       setRecUnitCost('');
       setRecBatchNo('');
       setRecExpiryDate('');
@@ -803,8 +854,8 @@ export function ManagerInventoryView() {
       {/* Receive Stock (GRN) Modal */}
       {showReceiveModal && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-zinc-900 rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-zinc-200 dark:border-zinc-800">
-            <div className="bg-indigo-600 text-white px-6 py-4 flex items-center justify-between">
+          <div className="bg-white dark:bg-zinc-900 rounded-3xl shadow-2xl max-w-md w-full max-h-[92vh] overflow-y-auto border border-zinc-200 dark:border-zinc-800">
+            <div className="bg-indigo-600 text-white px-6 py-4 flex items-center justify-between sticky top-0 z-30">
               <h3 className="font-bold text-lg">Receive Supplier Stock (GRN)</h3>
               <button onClick={() => setShowReceiveModal(false)} className="text-2xl leading-none">
                 &times;
@@ -837,22 +888,219 @@ export function ManagerInventoryView() {
                 />
               </div>
               <div>
-                <label className="block font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
-                  Product
-                </label>
-                <select
-                  required
-                  value={recProductId}
-                  onChange={(e) => setRecProductId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800"
-                >
-                  <option value="">-- Select Product --</option>
-                  {products.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name} ({p.barcode}) - Stock: {p.stockQuantity}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block font-semibold text-zinc-600 dark:text-zinc-400">
+                    Product {recCreatingNew ? '(New Catalog Item)' : '(Search or Type New)'}
+                  </label>
+                  {recCreatingNew ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecCreatingNew(false);
+                        setRecProductId('');
+                        setRecDropdownOpen(true);
+                      }}
+                      className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
+                    >
+                      ← Pick existing product
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecCreatingNew(true);
+                        setRecProductId('');
+                        setRecNewName(recProductQuery.trim());
+                        setRecDropdownOpen(false);
+                      }}
+                      className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:underline"
+                    >
+                      + Add New Product
+                    </button>
+                  )}
+                </div>
+
+                {!recCreatingNew ? (
+                  <div className="relative">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        value={recProductQuery}
+                        onFocus={() => setRecDropdownOpen(true)}
+                        onChange={(e) => {
+                          setRecProductQuery(e.target.value);
+                          setRecProductId('');
+                          setRecDropdownOpen(true);
+                        }}
+                        placeholder="Type product name or scan barcode..."
+                        className="w-full px-3 py-2 pr-8 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800"
+                      />
+                      {recProductQuery && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRecProductQuery('');
+                            setRecProductId('');
+                            setRecDropdownOpen(true);
+                          }}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-zinc-600 text-sm"
+                          title="Clear selection"
+                        >
+                          &times;
+                        </button>
+                      )}
+                    </div>
+
+                    {recDropdownOpen && (
+                      <div className="absolute z-20 mt-1 w-full max-h-52 overflow-y-auto rounded-xl border border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-800 shadow-xl divide-y divide-zinc-100 dark:divide-zinc-700/60">
+                        {products
+                          .filter((p) => {
+                            const q = recProductQuery.trim().toLowerCase();
+                            if (!q) return true;
+                            return (
+                              p.name.toLowerCase().includes(q) ||
+                              (p.barcode && p.barcode.toLowerCase().includes(q))
+                            );
+                          })
+                          .map((p) => (
+                            <button
+                              key={p.id}
+                              type="button"
+                              onClick={() => {
+                                setRecProductId(p.id);
+                                setRecProductQuery(p.name);
+                                setRecDropdownOpen(false);
+                                setRecVatRate(
+                                  p.taxCategory === 'A' ? '0.16' : p.taxCategory === 'C' ? '0.08' : '0'
+                                );
+                              }}
+                              className={`w-full text-left px-3 py-2 hover:bg-indigo-50 dark:hover:bg-indigo-950/50 flex items-center justify-between gap-2 ${
+                                recProductId === p.id ? 'bg-indigo-50 dark:bg-indigo-950/60 font-semibold' : ''
+                              }`}
+                            >
+                              <span className="truncate">
+                                {p.name}{' '}
+                                <span className="text-zinc-400 font-mono text-[11px]">({p.barcode})</span>
+                              </span>
+                              <span className="text-[11px] font-mono text-zinc-500 shrink-0">
+                                Stock: {p.stockQuantity}
+                              </span>
+                            </button>
+                          ))}
+
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setRecCreatingNew(true);
+                            setRecProductId('');
+                            setRecNewName(recProductQuery.trim());
+                            setRecDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-3 py-2.5 bg-emerald-50/70 dark:bg-emerald-950/40 hover:bg-emerald-100 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-300 font-semibold flex items-center gap-1.5"
+                        >
+                          <span>＋</span>
+                          <span>
+                            {recProductQuery.trim()
+                              ? `Add & Receive "${recProductQuery.trim()}" as a New Product`
+                              : 'Add & Receive a New Product not in list'}
+                          </span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-3 rounded-2xl border border-emerald-500/40 bg-emerald-50/40 dark:bg-emerald-950/20 space-y-2.5">
+                    <div>
+                      <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                        New Product Name
+                      </label>
+                      <input
+                        type="text"
+                        required
+                        value={recNewName}
+                        onChange={(e) => setRecNewName(e.target.value)}
+                        placeholder="e.g. Pembe Maize Flour 2kg"
+                        className="w-full px-3 py-1.5 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800"
+                      />
+                    </div>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                          Barcode / SKU
+                        </label>
+                        <div className="flex gap-1">
+                          <input
+                            type="text"
+                            required
+                            value={recNewBarcode}
+                            onChange={(e) => setRecNewBarcode(e.target.value)}
+                            placeholder="Scan or type barcode"
+                            className="flex-1 min-w-0 px-2.5 py-1.5 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRecNewBarcode(`616${Math.floor(100000000 + Math.random() * 900000000)}`)
+                            }
+                            className="px-2 py-1.5 rounded-xl bg-zinc-200 dark:bg-zinc-700 text-zinc-700 dark:text-zinc-200 font-semibold shrink-0"
+                            title="Generate internal barcode"
+                          >
+                            Gen
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                          Selling Price (KES)
+                        </label>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          required
+                          value={recNewPrice}
+                          onChange={(e) => setRecNewPrice(e.target.value)}
+                          placeholder="0.00"
+                          className="w-full px-2.5 py-1.5 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                          KRA Tax Category
+                        </label>
+                        <select
+                          value={recNewTaxCat}
+                          onChange={(e) => {
+                            const cat = e.target.value;
+                            setRecNewTaxCat(cat);
+                            setRecVatRate(cat === 'A' ? '0.16' : cat === 'C' ? '0.08' : '0');
+                          }}
+                          className="w-full px-2.5 py-1.5 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800"
+                        >
+                          <option value="A">Category A - 16% Std</option>
+                          <option value="C">Category C - 8% Special</option>
+                          <option value="B">Category B - 0% Zero-Rated</option>
+                          <option value="E">Category E - VAT Exempt</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                          Reorder Level
+                        </label>
+                        <input
+                          type="number"
+                          step="1"
+                          min="0"
+                          value={recNewReorder}
+                          onChange={(e) => setRecNewReorder(e.target.value)}
+                          className="w-full px-2.5 py-1.5 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
