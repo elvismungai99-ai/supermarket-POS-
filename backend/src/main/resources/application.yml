@@ -1,0 +1,45 @@
+server:
+  port: ${SERVER_PORT:8080}
+  forward-headers-strategy: ${FORWARD_HEADERS_STRATEGY:NONE}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      show-details: when_authorized
+
+spring:
+  application:
+    name: pos-backend
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5433/pos}
+    username: ${SPRING_DATASOURCE_USERNAME:pos}
+    password: ${SPRING_DATASOURCE_PASSWORD:pos_dev_password}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+
+pos:
+  security:
+    require-auth: ${POS_SECURITY_REQUIRE_AUTH:true}
+    jwt-secret: ${POS_JWT_SECRET:kenya-retail-pos-dev-secret-change-in-production-2026}
+    encryption-key: ${POS_ENCRYPTION_KEY:${POS_JWT_SECRET:kenya-retail-pos-dev-secret-change-in-production-2026}}
+    jwt-ttl-seconds: ${POS_JWT_TTL_SECONDS:3600}
+    enforce-strong-keys: ${POS_SECURITY_ENFORCE_STRONG_KEYS:false}
+    trust-forwarded-headers: ${POS_SECURITY_TRUST_FORWARDED_HEADERS:false}
+  mpesa:
+    enabled: ${POS_MPESA_ENABLED:false}
+    base-url: ${POS_MPESA_BASE_URL:https://sandbox.safaricom.co.ke}
+    consumer-key: ${POS_MPESA_CONSUMER_KEY:}
+    consumer-secret: ${POS_MPESA_CONSUMER_SECRET:}
+    short-code: ${POS_MPESA_SHORT_CODE:174379}
+    passkey: ${POS_MPESA_PASSKEY:}
+    callback-url: ${POS_MPESA_CALLBACK_URL:https://example.com/api/payments/mpesa-callback}
+    transaction-type: ${POS_MPESA_TX_TYPE:CustomerPayBillOnline}
+    allowed-callback-ips: ${POS_MPESA_ALLOWED_CALLBACK_IPS:}

@@ -1,0 +1,18 @@
+# IDE / OS files
+.DS_Store
+.idea/
+*.iml
+.vscode/
+
+# Build artifacts
+**/target/
+**/dist/
+**/node_modules/
+*.log
+
+# Environment files & TLS certificates (keep .env.example)
+.env
+.env.*
+!.env.example
+infra/nginx/certs/*.pem
+infra/nginx/certs/*.key

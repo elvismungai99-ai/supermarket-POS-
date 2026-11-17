@@ -1,0 +1,12 @@
+{
+  "name": "retailpos-hardware-agent",
+  "version": "1.0.0",
+  "description": "Local Hardware Agent for 80mm ESC/POS Receipt Printer & Weighing Scale",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": ["pos", "escpos", "scale", "kenya-retail"],
+  "author": "Mwangi",
+  "license": "MIT"
+}
