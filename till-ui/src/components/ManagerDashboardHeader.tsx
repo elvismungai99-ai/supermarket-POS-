@@ -21,16 +21,20 @@ export function ManagerDashboardHeader({
   const [pendingApprovals, setPendingApprovals] = useState<number>(0);
   const [lowStockCount, setLowStockCount] = useState<number>(0);
   const [activeShifts, setActiveShifts] = useState<number>(0);
+  const [monthlyTaxDue, setMonthlyTaxDue] = useState<number>(0);
+  const [totalTaxPaid, setTotalTaxPaid] = useState<number>(0);
+  const [taxPeriodLabel, setTaxPeriodLabel] = useState<string>('');
 
   const loadKpis = async () => {
     const headers: Record<string, string> = {};
     if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
 
     try {
-      const [cashiersRes, lowStockRes, salesRes] = await Promise.all([
+      const [cashiersRes, lowStockRes, salesRes, taxRes] = await Promise.all([
         apiFetch('/api/cashiers', { headers }),
         apiFetch('/api/products/low-stock', { headers }),
         apiFetch('/api/reports/daily-sales', { headers }),
+        apiFetch('/api/reports/monthly-tax', { headers }),
       ]);
 
       if (cashiersRes.ok) {
@@ -54,6 +58,13 @@ export function ManagerDashboardHeader({
           setGrossSalesToday(Number(todayEntry.totalRevenueKes || 0));
           setTransactionsToday(Number(todayEntry.totalSalesCount || 0));
         }
+      }
+
+      if (taxRes.ok) {
+        const t = await taxRes.json();
+        setMonthlyTaxDue(Number(t?.currentMonth?.netTaxPayableKes || 0));
+        setTotalTaxPaid(Number(t?.cumulative?.totalTaxPaidKes || 0));
+        setTaxPeriodLabel(t?.currentMonth?.monthLabel || '');
       }
     } catch {
       // Keep previous values on transient failure
@@ -84,6 +95,9 @@ export function ManagerDashboardHeader({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
+          <span className="px-3 py-1.5 bg-amber-500/10 text-amber-300 border border-amber-500/20 rounded-xl text-xs font-semibold font-mono">
+            {taxPeriodLabel || 'Month'} Tax: KES {monthlyTaxDue.toLocaleString('en-US', { minimumFractionDigits: 2 })} | Paid: KES {totalTaxPaid.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+          </span>
           <span className="px-3 py-1.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-xl text-xs font-semibold">
             Active Tills: {activeShifts}
           </span>

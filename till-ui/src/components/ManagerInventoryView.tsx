@@ -61,6 +61,7 @@ export function ManagerInventoryView() {
   const [recProductId, setRecProductId] = useState('');
   const [recQty, setRecQty] = useState('10');
   const [recUnitCost, setRecUnitCost] = useState('');
+  const [recVatRate, setRecVatRate] = useState('0.16');
   const [recBatchNo, setRecBatchNo] = useState('');
   const [recExpiryDate, setRecExpiryDate] = useState('');
   const [recPostErpNext, setRecPostErpNext] = useState(false);
@@ -228,6 +229,7 @@ export function ManagerInventoryView() {
           productId: recProductId,
           quantity: parseFloat(recQty),
           unitCostKes: parseFloat(recUnitCost),
+          vatRate: parseFloat(recVatRate),
           postToErpNext: recPostErpNext,
           batchNumber: recBatchNo || null,
           expiryDate: recExpiryDate || null,
@@ -882,6 +884,20 @@ export function ManagerInventoryView() {
                     className="w-full px-3 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
                   />
                 </div>
+              </div>
+              <div>
+                <label className="block font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
+                  Supplier Input VAT Rate (for Monthly KRA VAT Offset)
+                </label>
+                <select
+                  value={recVatRate}
+                  onChange={(e) => setRecVatRate(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800"
+                >
+                  <option value="0.16">16% Standard Input VAT</option>
+                  <option value="0.08">8% Special Rate Input VAT</option>
+                  <option value="0">0% Zero-Rated / Non-VAT Supplier</option>
+                </select>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>

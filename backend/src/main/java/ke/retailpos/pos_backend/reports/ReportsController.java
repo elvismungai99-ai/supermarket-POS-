@@ -3,10 +3,13 @@ package ke.retailpos.pos_backend.reports;
 import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -17,9 +20,16 @@ import org.springframework.web.bind.annotation.*;
 public class ReportsController {
 
   private final JdbcTemplate jdbcTemplate;
+  private final MonthlyTaxService monthlyTaxService;
 
   public ReportsController(JdbcTemplate jdbcTemplate) {
+    this(jdbcTemplate, null);
+  }
+
+  @Autowired
+  public ReportsController(JdbcTemplate jdbcTemplate, MonthlyTaxService monthlyTaxService) {
     this.jdbcTemplate = jdbcTemplate;
+    this.monthlyTaxService = monthlyTaxService;
   }
 
   public record DailySalesSummary(
@@ -87,11 +97,32 @@ public class ReportsController {
   public List<TaxInvoiceDto> getTaxInvoices(
       @RequestParam(required = false) String month
   ) {
-    String sql = """
+    String filterMonth = null;
+    if (month != null && !month.isBlank()) {
+      filterMonth = YearMonth.parse(month.trim()).toString();
+    }
+
+    String sql = filterMonth != null
+        ? """
         select
           s.id as sale_id,
           s.till_id,
-          to_char(s.created_at, 'YYYY-MM-DD HH24:MI:SS') as formatted_date,
+          to_char(s.created_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD HH24:MI:SS') as formatted_date,
+          s.total_kes,
+          coalesce(sum(sl.tax_amount_kes), 0) as total_tax,
+          coalesce(sum(sl.line_total_kes - sl.tax_amount_kes), 0) as taxable_amount
+        from sale s
+        left join sale_line sl on sl.sale_id = s.id
+        where to_char(s.created_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM') = ?
+        group by s.id, s.till_id, s.created_at, s.total_kes
+        order by s.created_at desc
+        limit 200
+        """
+        : """
+        select
+          s.id as sale_id,
+          s.till_id,
+          to_char(s.created_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD HH24:MI:SS') as formatted_date,
           s.total_kes,
           coalesce(sum(sl.tax_amount_kes), 0) as total_tax,
           coalesce(sum(sl.line_total_kes - sl.tax_amount_kes), 0) as taxable_amount
@@ -102,7 +133,7 @@ public class ReportsController {
         limit 100
         """;
 
-    return jdbcTemplate.query(sql, (rs, rowNum) -> {
+    org.springframework.jdbc.core.RowMapper<TaxInvoiceDto> mapper = (rs, rowNum) -> {
       UUID saleId = (UUID) rs.getObject("sale_id");
       UUID tillId = (UUID) rs.getObject("till_id");
       String date = rs.getString("formatted_date");
@@ -125,7 +156,65 @@ public class ReportsController {
           "COMPLIED",
           qrUrl
       );
-    });
+    };
+
+    return filterMonth != null
+        ? jdbcTemplate.query(sql, mapper, filterMonth)
+        : jdbcTemplate.query(sql, mapper);
+  }
+
+  @GetMapping("/monthly-tax")
+  public ResponseEntity<?> getMonthlyTax(@RequestParam(required = false) String month) {
+    if (monthlyTaxService == null) {
+      return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("message", "MonthlyTaxService unavailable"));
+    }
+    try {
+      return ResponseEntity.ok(monthlyTaxService.getMonthlyTaxReport(month));
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+    }
+  }
+
+  @PostMapping("/tax-payments")
+  public ResponseEntity<?> recordTaxPayment(@RequestBody MonthlyTaxService.RecordTaxPaymentRequest request) {
+    if (monthlyTaxService == null) {
+      return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("message", "MonthlyTaxService unavailable"));
+    }
+    try {
+      return ResponseEntity.status(HttpStatus.CREATED).body(monthlyTaxService.recordTaxPayment(request));
+    } catch (IllegalArgumentException e) {
+      return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+    }
+  }
+
+  @GetMapping("/monthly-tax/export")
+  public ResponseEntity<byte[]> exportMonthlyTaxCsv(@RequestParam(required = false) String month) {
+    MonthlyTaxService.MonthlyTaxReportResponse report = monthlyTaxService.getMonthlyTaxReport(month);
+    StringBuilder csv = new StringBuilder();
+    csv.append("TaxPeriod,MonthLabel,SalesCount,GrossSalesKES,TaxableSalesKES,OutputVATKES,ReturnsVATKES,NetOutputVATKES,PurchasesKES,InputVATKES,NetTaxPayableKES,VATCreditCarryoverKES,TaxPaidKES,BalanceDueKES,Status\n");
+    for (MonthlyTaxService.MonthlyTaxSummaryDto m : report.monthlySummaries()) {
+      csv.append(sanitizeCsv(m.month())).append(",")
+          .append(sanitizeCsv(m.monthLabel())).append(",")
+          .append(m.salesCount()).append(",")
+          .append(m.grossSalesKes()).append(",")
+          .append(m.taxableSalesKes()).append(",")
+          .append(m.outputVatKes()).append(",")
+          .append(m.returnsVatKes()).append(",")
+          .append(m.netOutputVatKes()).append(",")
+          .append(m.purchasesTotalKes()).append(",")
+          .append(m.inputVatKes()).append(",")
+          .append(m.netTaxPayableKes()).append(",")
+          .append(m.vatCreditCarryoverKes()).append(",")
+          .append(m.taxPaidKes()).append(",")
+          .append(m.balanceDueKes()).append(",")
+          .append(sanitizeCsv(m.status())).append("\n");
+    }
+
+    byte[] bytes = csv.toString().getBytes(StandardCharsets.UTF_8);
+    return ResponseEntity.ok()
+        .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"kra_monthly_tax_summary_" + report.selectedMonth() + ".csv\"")
+        .contentType(MediaType.parseMediaType("text/csv; charset=UTF-8"))
+        .body(bytes);
   }
 
   @GetMapping("/tax-invoices/export")

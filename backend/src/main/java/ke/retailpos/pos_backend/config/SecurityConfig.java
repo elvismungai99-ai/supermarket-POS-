@@ -56,7 +56,11 @@ public class SecurityConfig {
             auth.requestMatchers("/api/auth/admin/**", "/api/admin/**", "/api/accounting/**").hasRole("SUPER_ADMIN");
             auth.requestMatchers("/api/auth/mfa/**").authenticated();
             auth.requestMatchers(HttpMethod.GET, "/api/customers").hasAnyRole("SUPERVISOR", "SUPER_ADMIN");
-            auth.requestMatchers(HttpMethod.GET, "/api/reports/daily-sales", "/api/reports/tax-invoices/export")
+            auth.requestMatchers(HttpMethod.GET,
+                "/api/reports/daily-sales",
+                "/api/reports/tax-invoices/export",
+                "/api/reports/monthly-tax",
+                "/api/reports/monthly-tax/export")
                 .hasAnyRole("SUPERVISOR", "SUPER_ADMIN");
             auth.requestMatchers("/api/reports/**").hasRole("SUPER_ADMIN");
             auth.requestMatchers(HttpMethod.POST, "/api/branches/**").hasRole("SUPER_ADMIN");

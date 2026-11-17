@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { AccountingErpNextView } from './AccountingErpNextView';
+import { MonthlyTaxView, type MonthlyTaxReportResponse } from './MonthlyTaxView';
 import { apiFetch, downloadAuthenticatedFile } from '../utils/apiClient';
 import { useToast } from '../utils/toast';
 
@@ -67,10 +68,11 @@ interface SuperAdminViewProps {
 
 export function SuperAdminView({ authToken }: SuperAdminViewProps) {
   const { showToast } = useToast();
-  const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'ACCOUNTING' | 'TAX_INVOICES' | 'SECURITY'>('OVERVIEW');
+  const [activeTab, setActiveTab] = useState<'OVERVIEW' | 'MONTHLY_TAX' | 'ACCOUNTING' | 'TAX_INVOICES' | 'SECURITY'>('OVERVIEW');
   const [dailySales, setDailySales] = useState<DailySalesSummary[]>([]);
   const [taxInvoices, setTaxInvoices] = useState<TaxInvoiceItem[]>([]);
   const [outboxStatus, setOutboxStatus] = useState<OutboxStatus | null>(null);
+  const [monthlyTax, setMonthlyTax] = useState<MonthlyTaxReportResponse | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
   const [shops, setShops] = useState<BranchShopItem[]>([]);
   const [tills, setTills] = useState<BranchTillItem[]>([]);
@@ -158,18 +160,20 @@ export function SuperAdminView({ authToken }: SuperAdminViewProps) {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [salesRes, invRes, outboxRes, auditRes, branchRes] = await Promise.all([
+      const [salesRes, invRes, outboxRes, auditRes, branchRes, taxRes] = await Promise.all([
         apiFetch('/api/reports/daily-sales'),
         apiFetch('/api/reports/tax-invoices'),
         apiFetch('/api/reports/outbox-status'),
         apiFetch('/api/admin/audit-logs?limit=50'),
         apiFetch('/api/branches'),
+        apiFetch('/api/reports/monthly-tax'),
       ]);
 
       if (salesRes.ok) setDailySales(await salesRes.json());
       if (invRes.ok) setTaxInvoices(await invRes.json());
       if (outboxRes.ok) setOutboxStatus(await outboxRes.json());
       if (auditRes.ok) setAuditLogs(await auditRes.json());
+      if (taxRes.ok) setMonthlyTax(await taxRes.json());
       if (branchRes.ok) {
         const b = await branchRes.json();
         setShops(b.shops || []);
@@ -300,6 +304,17 @@ export function SuperAdminView({ authToken }: SuperAdminViewProps) {
           </button>
 
           <button
+            onClick={() => setActiveTab('MONTHLY_TAX')}
+            className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
+              activeTab === 'MONTHLY_TAX'
+                ? 'bg-emerald-600 text-white shadow'
+                : 'text-slate-300 hover:text-white hover:bg-slate-800'
+            }`}
+          >
+            <span>🏛️</span> Monthly Tax &amp; Paid
+          </button>
+
+          <button
             onClick={() => setActiveTab('ACCOUNTING')}
             className={`px-3.5 py-2 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
               activeTab === 'ACCOUNTING'
@@ -334,7 +349,9 @@ export function SuperAdminView({ authToken }: SuperAdminViewProps) {
         </div>
       </div>
 
-      {activeTab === 'ACCOUNTING' ? (
+      {activeTab === 'MONTHLY_TAX' ? (
+        <MonthlyTaxView canRecordPayment={true} />
+      ) : activeTab === 'ACCOUNTING' ? (
         <AccountingErpNextView />
       ) : activeTab === 'SECURITY' ? (
         <div className="space-y-6">
@@ -658,7 +675,7 @@ export function SuperAdminView({ authToken }: SuperAdminViewProps) {
       ) : (
         <>
           {/* Top KPI Row */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
             <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 shadow-xl flex items-center justify-between">
               <div>
                 <p className="text-xs uppercase text-slate-400 font-semibold tracking-wider">
@@ -675,6 +692,27 @@ export function SuperAdminView({ authToken }: SuperAdminViewProps) {
                 📡
               </div>
             </div>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('MONTHLY_TAX')}
+              className="text-left bg-slate-900 hover:border-emerald-500/40 p-5 rounded-2xl border border-slate-800 shadow-xl flex items-center justify-between transition"
+            >
+              <div>
+                <p className="text-xs uppercase text-slate-400 font-semibold tracking-wider">
+                  Monthly Tax &amp; Paid
+                </p>
+                <p className="text-xl font-black font-mono text-emerald-400 mt-1">
+                  Paid: KES {Number(monthlyTax?.cumulative.totalTaxPaidKes ?? 0).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </p>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  This month due: KES {Number(monthlyTax?.currentMonth.netTaxPayableKes ?? 0).toFixed(2)} ({monthlyTax?.currentMonth.status || '—'})
+                </p>
+              </div>
+              <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center text-2xl">
+                💰
+              </div>
+            </button>
 
             <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 shadow-xl flex items-center justify-between">
               <div>
