@@ -9,15 +9,28 @@ public class LoginRateLimiter {
 
   public static final int MAX_ATTEMPTS = 5;
   public static final int MAX_IP_ATTEMPTS = 20;
+  public static final int MAX_REGISTER_IP_ATTEMPTS = 10;
   public static final long LOCKOUT_DURATION_MS = 60_000L; // 60 seconds lockout
+  private static final int MAX_TRACKED_KEYS = 10_000;
 
   private static class Attempt {
     int count = 0;
     long lockUntil = 0L;
+    long lastSeen = System.currentTimeMillis();
   }
 
   private final Map<String, Attempt> attempts = new ConcurrentHashMap<>();
   private final Map<String, Attempt> ipAttempts = new ConcurrentHashMap<>();
+
+  public boolean isRegisterBlocked(String clientIp) {
+    return clientIp != null && !clientIp.isBlank() && isKeyBlocked(ipAttempts, "reg:" + clientIp);
+  }
+
+  public void recordRegisterAttempt(String clientIp) {
+    if (clientIp != null && !clientIp.isBlank()) {
+      recordKeyAttempt(ipAttempts, "reg:" + clientIp, MAX_REGISTER_IP_ATTEMPTS);
+    }
+  }
 
   public boolean isBlocked(String key) {
     return isKeyBlocked(attempts, key);
@@ -96,14 +109,29 @@ public class LoginRateLimiter {
 
   private void recordKeyAttempt(Map<String, Attempt> map, String key, int maxAllowed) {
     if (key == null) return;
+    if (map.size() >= MAX_TRACKED_KEYS) {
+      evictExpired(map);
+    }
     String cleanKey = key.toLowerCase();
+    long now = System.currentTimeMillis();
     map.compute(cleanKey, (k, att) -> {
-      if (att == null) att = new Attempt();
+      if (att == null || (now - att.lastSeen) > LOCKOUT_DURATION_MS * 5) {
+        att = new Attempt();
+      }
+      att.lastSeen = now;
       att.count++;
       if (att.count >= maxAllowed) {
-        att.lockUntil = System.currentTimeMillis() + LOCKOUT_DURATION_MS;
+        att.lockUntil = now + LOCKOUT_DURATION_MS;
       }
       return att;
+    });
+  }
+
+  private void evictExpired(Map<String, Attempt> map) {
+    long now = System.currentTimeMillis();
+    map.entrySet().removeIf(e -> {
+      Attempt a = e.getValue();
+      return (a.lockUntil > 0 && a.lockUntil <= now) || (now - a.lastSeen) > LOCKOUT_DURATION_MS * 5;
     });
   }
 }

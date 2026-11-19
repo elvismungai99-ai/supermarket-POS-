@@ -8,16 +8,19 @@ import java.util.Base64;
 import javax.crypto.Cipher;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * Encrypts sensitive integration credentials (e.g. ERPNext API secret) at rest using AES-256-GCM.
+ * Encrypts sensitive integration credentials (e.g. ERPNext API secret, MFA TOTP secrets) at rest using AES-256-GCM.
  */
 @Service
 public class SecretEncryptionService {
 
+  private static final Logger log = LoggerFactory.getLogger(SecretEncryptionService.class);
   private static final String PREFIX = "ENC:v1:";
   private static final int GCM_IV_LENGTH = 12;
   private static final int GCM_TAG_BITS = 128;
@@ -26,13 +29,18 @@ public class SecretEncryptionService {
   private final SecureRandom secureRandom = new SecureRandom();
 
   public SecretEncryptionService(String rawKey) {
-    this(rawKey, false);
+    this(rawKey, "", false);
+  }
+
+  public SecretEncryptionService(String rawKey, boolean enforceStrongKeys) {
+    this(rawKey, "", enforceStrongKeys);
   }
 
   @Autowired
   public SecretEncryptionService(
       @Value("${pos.security.encryption-key:${pos.security.jwt-secret:" + JwtService.DEV_DEFAULT_SECRET + "}}")
       String rawKey,
+      @Value("${pos.security.jwt-secret:" + JwtService.DEV_DEFAULT_SECRET + "}") String jwtSecret,
       @Value("${pos.security.enforce-strong-keys:false}") boolean enforceStrongKeys
   ) {
     if (rawKey == null || rawKey.isBlank()) {
@@ -42,6 +50,14 @@ public class SecretEncryptionService {
       throw new IllegalStateException(
           "Security startup guard: POS_ENCRYPTION_KEY must be >=32 random chars and non-default when pos.security.enforce-strong-keys=true"
       );
+    }
+    if (jwtSecret != null && !jwtSecret.isBlank() && rawKey.equals(jwtSecret)) {
+      if (enforceStrongKeys) {
+        throw new IllegalStateException(
+            "Security startup guard: POS_ENCRYPTION_KEY must be distinct from POS_JWT_SECRET when pos.security.enforce-strong-keys=true"
+        );
+      }
+      log.warn("SECURITY NOTICE: POS_ENCRYPTION_KEY matches POS_JWT_SECRET. Configure a distinct POS_ENCRYPTION_KEY in production for safe key rotation.");
     }
     try {
       byte[] sha = MessageDigest.getInstance("SHA-256")

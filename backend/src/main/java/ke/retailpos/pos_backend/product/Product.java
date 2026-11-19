@@ -4,6 +4,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.util.UUID;
 
@@ -34,6 +35,10 @@ public class Product {
 
   @Column(name = "cost_price_kes", nullable = false)
   private BigDecimal costPriceKes = BigDecimal.ZERO;
+
+  @Version
+  @Column(name = "version", nullable = false)
+  private long version = 0L;
 
   public Product() {}
 

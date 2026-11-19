@@ -4,6 +4,7 @@ import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
@@ -26,6 +27,10 @@ public class Customer {
 
   @Column(name = "created_at", nullable = false)
   private Instant createdAt = Instant.now();
+
+  @Version
+  @Column(name = "version", nullable = false)
+  private long version = 0L;
 
   public Customer() {}
 

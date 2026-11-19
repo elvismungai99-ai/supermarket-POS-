@@ -10,10 +10,14 @@ import java.util.Optional;
 import java.util.UUID;
 import ke.retailpos.pos_backend.auth.Cashier;
 import ke.retailpos.pos_backend.auth.CashierRepository;
+import ke.retailpos.pos_backend.config.AuthenticatedUser;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 class ShiftControllerTest {
 
@@ -105,6 +109,11 @@ class ShiftControllerTest {
     assertTrue(err.message().contains("Till is already occupied by cashier Kevin Mutua"));
   }
 
+  @AfterEach
+  void tearDown() {
+    SecurityContextHolder.clearContext();
+  }
+
   @Test
   void testGetCurrentShiftReturnsNoContentWhenNoneOpen() {
     UUID tillId = UUID.randomUUID();
@@ -113,5 +122,34 @@ class ShiftControllerTest {
     ResponseEntity<?> resp = shiftController.getCurrentShift(tillId);
 
     assertEquals(HttpStatus.NO_CONTENT, resp.getStatusCode());
+  }
+
+  @Test
+  void testDifferentCashierCannotCloseAnotherCashiersShift() {
+    UUID ownerId = UUID.randomUUID();
+    UUID otherCashierId = UUID.randomUUID();
+    UUID shiftId = UUID.randomUUID();
+    Cashier owner = new Cashier(ownerId, "cashier_a", "Cashier A", "hash", "CASHIER", true, "ACTIVE", Instant.now());
+    Shift openShift = new Shift(shiftId, UUID.randomUUID(), owner, Instant.now(), new BigDecimal("1000.00"), "OPEN");
+
+    when(shiftRepository.findById(shiftId)).thenReturn(Optional.of(openShift));
+
+    var otherPrincipal = new AuthenticatedUser(otherCashierId, "cashier_b", "CASHIER");
+    SecurityContextHolder.getContext().setAuthentication(
+        new UsernamePasswordAuthenticationToken(otherPrincipal, null, java.util.List.of())
+    );
+
+    ResponseEntity<?> blocked = shiftController.closeShift(new ShiftController.CloseShiftRequest(shiftId, new BigDecimal("0.00")));
+    assertEquals(HttpStatus.FORBIDDEN, blocked.getStatusCode());
+    verify(shiftRepository, never()).save(any());
+
+    // Owner closing their own shift succeeds
+    var ownerPrincipal = new AuthenticatedUser(ownerId, "cashier_a", "CASHIER");
+    SecurityContextHolder.getContext().setAuthentication(
+        new UsernamePasswordAuthenticationToken(ownerPrincipal, null, java.util.List.of())
+    );
+    when(shiftRepository.save(any(Shift.class))).thenAnswer(inv -> inv.getArgument(0));
+    ResponseEntity<?> allowed = shiftController.closeShift(new ShiftController.CloseShiftRequest(shiftId, new BigDecimal("1000.00")));
+    assertEquals(HttpStatus.OK, allowed.getStatusCode());
   }
 }

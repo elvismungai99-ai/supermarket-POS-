@@ -96,9 +96,16 @@ public class AuditLogService {
     var attrs = RequestContextHolder.getRequestAttributes();
     if (attrs instanceof ServletRequestAttributes sra) {
       if (trustForwardedHeaders) {
+        // Prefer X-Real-IP set directly by trusted reverse proxy (Nginx $remote_addr)
+        String realIp = sra.getRequest().getHeader("X-Real-IP");
+        if (realIp != null && !realIp.isBlank()) {
+          return realIp.trim();
+        }
+        // Fallback: rightmost entry in X-Forwarded-For (appended by trusted proxy, not client-spoofed leftmost)
         String xff = sra.getRequest().getHeader("X-Forwarded-For");
         if (xff != null && !xff.isBlank()) {
-          return xff.split(",")[0].trim();
+          String[] parts = xff.split(",");
+          return parts[parts.length - 1].trim();
         }
       }
       return sra.getRequest().getRemoteAddr();

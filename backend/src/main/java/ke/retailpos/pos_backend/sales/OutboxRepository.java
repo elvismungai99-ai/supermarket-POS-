@@ -10,13 +10,17 @@ import org.springframework.data.repository.query.Param;
 public interface OutboxRepository extends JpaRepository<Outbox, UUID> {
   List<Outbox> findBySentAtIsNull();
 
-  @Query("""
-      select o from Outbox o
-      where o.sentAt is null
-        and o.failedPermanently = false
-        and (o.nextRetryAt is null or o.nextRetryAt <= :now)
-      order by o.createdAt asc
-      """)
+  @Query(
+      value = """
+          SELECT * FROM outbox
+          WHERE sent_at IS NULL
+            AND failed_permanently = FALSE
+            AND (next_retry_at IS NULL OR next_retry_at <= :now)
+          ORDER BY created_at ASC
+          LIMIT 50
+          FOR UPDATE SKIP LOCKED
+          """,
+      nativeQuery = true)
   List<Outbox> findDuePending(@Param("now") Instant now);
 
   List<Outbox> findBySentAtIsNullAndFailedPermanentlyTrue();

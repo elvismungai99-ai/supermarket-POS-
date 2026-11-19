@@ -58,19 +58,23 @@ public class ReportsController {
   ) {}
 
   @GetMapping("/daily-sales")
-  public List<DailySalesSummary> getDailySales() {
+  public List<DailySalesSummary> getDailySales(
+      @RequestParam(defaultValue = "90") int days
+  ) {
+    int safeDays = Math.max(1, Math.min(days, 3650));
     String sql = """
         select
-          to_char(created_at, 'YYYY-MM-DD') as sale_date,
+          to_char(created_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD') as sale_date,
           till_id,
           count(id) as cnt,
           coalesce(sum(total_kes), 0) as total_rev
         from sale
-        group by to_char(created_at, 'YYYY-MM-DD'), till_id
+        where created_at >= now() - make_interval(days => ?)
+        group by to_char(created_at AT TIME ZONE 'Africa/Nairobi', 'YYYY-MM-DD'), till_id
         order by sale_date desc, till_id
         """;
 
-    Map<String, List<Map<String, Object>>> grouped = jdbcTemplate.queryForList(sql).stream()
+    Map<String, List<Map<String, Object>>> grouped = jdbcTemplate.queryForList(sql, safeDays).stream()
         .collect(java.util.stream.Collectors.groupingBy(row -> (String) row.get("sale_date")));
 
     return grouped.entrySet().stream()

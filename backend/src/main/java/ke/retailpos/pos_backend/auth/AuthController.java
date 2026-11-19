@@ -11,6 +11,7 @@ import ke.retailpos.pos_backend.config.AuthenticatedUser;
 import ke.retailpos.pos_backend.config.JwtService;
 import ke.retailpos.pos_backend.config.RevokedToken;
 import ke.retailpos.pos_backend.config.RevokedTokenRepository;
+import ke.retailpos.pos_backend.config.SecretEncryptionService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -89,6 +90,7 @@ public class AuthController {
   private final RevokedTokenRepository revokedTokenRepository;
   private final SupervisorOverrideTokenRepository overrideTokenRepository;
   private final TotpService totpService;
+  private final SecretEncryptionService secretEncryptionService;
 
   public AuthController(
       CashierRepository cashiers,
@@ -103,7 +105,8 @@ public class AuthController {
         null,
         null,
         null,
-        new TotpService()
+        new TotpService(),
+        null
     );
   }
 
@@ -114,7 +117,21 @@ public class AuthController {
       JwtService jwtService,
       AuditLogService auditLogService
   ) {
-    this(cashiers, passwordEncoder, rateLimiter, jwtService, auditLogService, null, null, new TotpService());
+    this(cashiers, passwordEncoder, rateLimiter, jwtService, auditLogService, null, null, new TotpService(), null);
+  }
+
+  public AuthController(
+      CashierRepository cashiers,
+      PasswordEncoder passwordEncoder,
+      LoginRateLimiter rateLimiter,
+      JwtService jwtService,
+      AuditLogService auditLogService,
+      RevokedTokenRepository revokedTokenRepository,
+      SupervisorOverrideTokenRepository overrideTokenRepository,
+      TotpService totpService
+  ) {
+    this(cashiers, passwordEncoder, rateLimiter, jwtService, auditLogService,
+        revokedTokenRepository, overrideTokenRepository, totpService, null);
   }
 
   @Autowired
@@ -126,7 +143,8 @@ public class AuthController {
       AuditLogService auditLogService,
       RevokedTokenRepository revokedTokenRepository,
       SupervisorOverrideTokenRepository overrideTokenRepository,
-      TotpService totpService
+      TotpService totpService,
+      SecretEncryptionService secretEncryptionService
   ) {
     this.cashiers = cashiers;
     this.passwordEncoder = passwordEncoder;
@@ -136,6 +154,7 @@ public class AuthController {
     this.revokedTokenRepository = revokedTokenRepository;
     this.overrideTokenRepository = overrideTokenRepository;
     this.totpService = totpService != null ? totpService : new TotpService();
+    this.secretEncryptionService = secretEncryptionService;
   }
 
   @PostMapping("/login")
@@ -208,7 +227,8 @@ public class AuthController {
             "MFA_REQUIRED: Enter your 6-digit authenticator code."
         ));
       }
-      if (!totpService.verifyCode(c.getMfaSecret(), code)) {
+      String plainSecret = decryptMfaSecret(c.getMfaSecret());
+      if (!totpService.verifyCode(plainSecret, code)) {
         rateLimiter.recordFailedAttempt(username, clientIp);
         recordAudit(c.getId(), c.getUsername(), c.getRole(), "LOGIN_MFA_FAILED", "cashier", c.getId().toString(), clientIp, "Invalid TOTP code");
         return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(new ErrorResponse(
@@ -271,7 +291,7 @@ public class AuthController {
     }
     Cashier c = opt.get();
     String secret = totpService.generateSecret();
-    c.setMfaSecret(secret);
+    c.setMfaSecret(encryptMfaSecret(secret));
     c.setMfaEnabled(false);
     cashiers.save(c);
     String otpAuthUri = totpService.buildOtpAuthUri("KenyaRetailPOS", c.getUsername(), secret);
@@ -298,7 +318,7 @@ public class AuthController {
     if (c.getMfaSecret() == null || c.getMfaSecret().isBlank()) {
       return ResponseEntity.badRequest().body(new ErrorResponse("Run MFA setup first to generate a secret."));
     }
-    if (!totpService.verifyCode(c.getMfaSecret(), req.code())) {
+    if (!totpService.verifyCode(decryptMfaSecret(c.getMfaSecret()), req.code())) {
       return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(new ErrorResponse("Invalid 6-digit verification code."));
     }
     c.setMfaEnabled(true);
@@ -330,6 +350,13 @@ public class AuthController {
 
   @PostMapping("/register")
   public ResponseEntity<?> register(@Valid @RequestBody RegisterRequest req) {
+    String clientIp = AuditLogService.currentClientIp();
+    if (rateLimiter.isRegisterBlocked(clientIp)) {
+      return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+          .body(new ErrorResponse("Too many registration requests from this IP. Please wait 60 seconds and try again."));
+    }
+    rateLimiter.recordRegisterAttempt(clientIp);
+
     String username = req.username().trim();
     if (cashiers.findByUsername(username).isPresent()) {
       return ResponseEntity.status(HttpStatus.CONFLICT).body(new ErrorResponse(
@@ -532,6 +559,14 @@ public class AuthController {
         newCashier.getStatus(),
         message
     ));
+  }
+
+  private String encryptMfaSecret(String plain) {
+    return secretEncryptionService != null ? secretEncryptionService.encrypt(plain) : plain;
+  }
+
+  private String decryptMfaSecret(String stored) {
+    return secretEncryptionService != null ? secretEncryptionService.decrypt(stored) : stored;
   }
 
   private void recordAudit(

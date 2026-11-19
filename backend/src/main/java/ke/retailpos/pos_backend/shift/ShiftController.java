@@ -112,6 +112,18 @@ public class ShiftController {
     }
 
     Shift shift = shiftOpt.get();
+    // Ownership guard (prevents IDOR where one cashier closes another cashier's shift)
+    AuthenticatedUser actor = AuditLogService.currentActor();
+    if (actor != null) {
+      boolean isPrivileged = "SUPERVISOR".equalsIgnoreCase(actor.role())
+          || "SUPER_ADMIN".equalsIgnoreCase(actor.role());
+      boolean isOwner = shift.getCashier() != null && shift.getCashier().getId().equals(actor.userId());
+      if (!isOwner && !isPrivileged) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+            .body(new ErrorResponse("You can only close your own active till shift."));
+      }
+    }
+
     if (!"OPEN".equalsIgnoreCase(shift.getStatus())) {
       return ResponseEntity.badRequest().body(new ErrorResponse("Shift is already closed"));
     }

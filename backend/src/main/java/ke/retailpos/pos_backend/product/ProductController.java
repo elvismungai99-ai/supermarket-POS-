@@ -5,10 +5,15 @@ import jakarta.validation.constraints.DecimalMin;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import java.math.BigDecimal;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import ke.retailpos.pos_backend.audit.AuditLogService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -83,16 +88,44 @@ public class ProductController {
     if (query == null || query.isBlank()) {
       return List.of();
     }
-    return products.searchByName(query.trim()).stream()
-        .map(p -> toDto(p, products.findBarcodeByProductId(p.getId()).orElse(null)))
-        .toList();
+    List<Product> found = products.searchByName(query.trim());
+    return mapProductsWithBarcodes(found);
   }
 
   @GetMapping
-  public List<ProductDto> getAllProducts(@RequestParam(defaultValue = "500") int limit) {
+  public List<ProductDto> getAllProducts(
+      @RequestParam(defaultValue = "500") int limit,
+      @RequestParam(defaultValue = "0") int page
+  ) {
     int cap = Math.max(1, Math.min(limit, 500));
-    return products.findAll().stream()
-        .limit(cap)
+    int safePage = Math.max(0, page);
+    Page<Product> paged = products.findAll(PageRequest.of(safePage, cap, Sort.by("name").ascending()));
+    List<Product> list = paged != null
+        ? paged.getContent()
+        : products.findAll().stream().limit(cap).toList();
+    return mapProductsWithBarcodes(list);
+  }
+
+  private List<ProductDto> mapProductsWithBarcodes(List<Product> list) {
+    if (list == null || list.isEmpty()) {
+      return List.of();
+    }
+    List<UUID> ids = list.stream().map(Product::getId).toList();
+    Map<UUID, String> barcodeByProductId = new HashMap<>();
+    List<Object[]> batchRows = products.findPrimaryBarcodesByProductIds(ids);
+    if (batchRows != null && !batchRows.isEmpty()) {
+      for (Object[] row : batchRows) {
+        if (row != null && row.length >= 2 && row[0] != null && row[1] != null) {
+          UUID pid = row[0] instanceof UUID u ? u : UUID.fromString(row[0].toString());
+          barcodeByProductId.putIfAbsent(pid, row[1].toString());
+        }
+      }
+      return list.stream()
+          .map(p -> toDto(p, barcodeByProductId.get(p.getId())))
+          .toList();
+    }
+    // Fallback for unit tests that mock only findBarcodeByProductId(...)
+    return list.stream()
         .map(p -> toDto(p, products.findBarcodeByProductId(p.getId()).orElse(null)))
         .toList();
   }

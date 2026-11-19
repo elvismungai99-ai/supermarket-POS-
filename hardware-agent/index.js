@@ -10,12 +10,47 @@ const PRINTER_HOST = process.env.PRINTER_HOST || '';
 const PRINTER_PORT = Number(process.env.PRINTER_PORT || 9100);
 const PRINTER_DEVICE = process.env.PRINTER_DEVICE || '';
 const HARDWARE_TOKEN = process.env.HARDWARE_TOKEN || '';
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+const ALLOW_SCALE_SIMULATE = process.env.ALLOW_SCALE_SIMULATE
+  ? process.env.ALLOW_SCALE_SIMULATE === 'true'
+  : !IS_PRODUCTION;
+const MAX_BODY_BYTES = 64 * 1024; // 64 KB cap against local memory exhaustion
 const ALLOWED_ORIGINS = new Set(
   (process.env.ALLOWED_ORIGINS || 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://localhost')
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
 );
+
+if (IS_PRODUCTION && !HARDWARE_TOKEN) {
+  console.error('FATAL: HARDWARE_TOKEN must be set when NODE_ENV=production');
+  process.exit(1);
+}
+
+function readJsonBody(req, res, onParsed) {
+  let body = '';
+  let byteLen = 0;
+  let aborted = false;
+  req.on('data', (chunk) => {
+    if (aborted) return;
+    byteLen += Buffer.byteLength(chunk);
+    if (byteLen > MAX_BODY_BYTES) {
+      aborted = true;
+      sendJson(req, res, 413, { error: 'Payload too large (max 64 KB)' });
+      req.destroy();
+      return;
+    }
+    body += chunk;
+  });
+  req.on('end', () => {
+    if (aborted) return;
+    try {
+      onParsed(JSON.parse(body || '{}'));
+    } catch {
+      sendJson(req, res, 400, { error: 'Invalid JSON payload' });
+    }
+  });
+}
 
 const scale = new ScaleDriver();
 
@@ -104,16 +139,12 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'POST' && url.pathname === '/scale/simulate') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', () => {
-      try {
-        const data = JSON.parse(body);
-        scale.setSimulatedWeight(data.weightKg);
-        sendJson(req, res, 200, { ok: true, weight: scale.readWeight() });
-      } catch {
-        sendJson(req, res, 400, { error: 'Invalid JSON payload' });
-      }
+    if (!ALLOW_SCALE_SIMULATE) {
+      return sendJson(req, res, 403, { error: 'Scale simulation is disabled in production' });
+    }
+    readJsonBody(req, res, (data) => {
+      scale.setSimulatedWeight(data.weightKg);
+      sendJson(req, res, 200, { ok: true, weight: scale.readWeight() });
     });
     return;
   }
@@ -127,11 +158,8 @@ const server = http.createServer((req, res) => {
   }
 
   if (req.method === 'POST' && url.pathname === '/print') {
-    let body = '';
-    req.on('data', (chunk) => { body += chunk; });
-    req.on('end', async () => {
+    readJsonBody(req, res, async (receipt) => {
       try {
-        const receipt = JSON.parse(body);
         const escposBytes = buildReceiptEscPos(receipt);
         const dispatch = await dispatchToPrinter(escposBytes);
 

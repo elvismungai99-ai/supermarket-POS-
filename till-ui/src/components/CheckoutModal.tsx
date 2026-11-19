@@ -16,6 +16,7 @@ export interface CartItem {
 export function CheckoutModal({
   cart,
   totalKes,
+  shopId = '00000000-0000-0000-0000-000000000001',
   tillId,
   cashierId,
   cashierName,
@@ -28,6 +29,7 @@ export function CheckoutModal({
 }: {
   cart: CartItem[];
   totalKes: number;
+  shopId?: string;
   tillId: string;
   cashierId: string;
   cashierName?: string;
@@ -129,7 +131,7 @@ export function CheckoutModal({
     const payload =
       paymentMethod === 'SPLIT'
         ? {
-            shopId: '00000000-0000-0000-0000-000000000001',
+            shopId,
             tillId,
             cashierId,
             clientSaleId,
@@ -160,7 +162,7 @@ export function CheckoutModal({
             ],
           }
         : {
-            shopId: '00000000-0000-0000-0000-000000000001',
+            shopId,
             tillId,
             cashierId,
             clientSaleId,

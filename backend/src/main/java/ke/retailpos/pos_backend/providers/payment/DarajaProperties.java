@@ -15,6 +15,7 @@ public class DarajaProperties {
   private String callbackUrl = "https://example.com/api/payments/mpesa-callback";
   private String transactionType = "CustomerPayBillOnline";
   private String allowedCallbackIps = "";
+  private String callbackSecret = "";
 
   public boolean isEnabled() { return enabled; }
   public void setEnabled(boolean enabled) { this.enabled = enabled; }
@@ -42,4 +43,7 @@ public class DarajaProperties {
 
   public String getAllowedCallbackIps() { return allowedCallbackIps; }
   public void setAllowedCallbackIps(String allowedCallbackIps) { this.allowedCallbackIps = allowedCallbackIps; }
+
+  public String getCallbackSecret() { return callbackSecret; }
+  public void setCallbackSecret(String callbackSecret) { this.callbackSecret = callbackSecret; }
 }

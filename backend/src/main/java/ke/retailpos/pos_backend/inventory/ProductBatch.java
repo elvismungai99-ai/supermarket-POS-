@@ -36,6 +36,10 @@ public class ProductBatch {
   @Column(name = "received_at", nullable = false)
   private Instant receivedAt = Instant.now();
 
+  @Version
+  @Column(name = "version", nullable = false)
+  private long version = 0L;
+
   public ProductBatch() {}
 
   public UUID getId() { return id; }

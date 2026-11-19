@@ -36,7 +36,23 @@ export interface ProductDto {
   detectedWeightKg?: number | null;
 }
 
-const TILL_ID = '00000000-0000-0000-0000-000000000001';
+const DEFAULT_SHOP_ID = '00000000-0000-0000-0000-000000000001';
+const DEFAULT_TILL_ID = '00000000-0000-0000-0000-000000000001';
+const TERMINAL_TILL_STORAGE_KEY = 'pos_terminal_till_id';
+const TERMINAL_SHOP_STORAGE_KEY = 'pos_terminal_shop_id';
+
+interface TerminalTillOption {
+  id: string;
+  shopId: string;
+  tillNumber: string;
+  label: string;
+}
+
+interface TerminalShopOption {
+  id: string;
+  code: string;
+  name: string;
+}
 
 type ManagerTab = 'CASHIERS' | 'INVENTORY' | 'RETURNS';
 
@@ -67,7 +83,23 @@ function AppContent() {
   const [offlineCount, setOfflineCount] = useState<number>(() => getOfflineQueue().length);
   const [syncingOffline, setSyncingOffline] = useState(false);
 
-  // Cashier / Till Shift state
+  // Cashier / Till Shift state (multi-till workstation binding; defaults seamlessly to Till 1)
+  const [selectedTillId, setSelectedTillId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(TERMINAL_TILL_STORAGE_KEY) || DEFAULT_TILL_ID;
+    } catch {
+      return DEFAULT_TILL_ID;
+    }
+  });
+  const [selectedShopId, setSelectedShopId] = useState<string>(() => {
+    try {
+      return localStorage.getItem(TERMINAL_SHOP_STORAGE_KEY) || DEFAULT_SHOP_ID;
+    } catch {
+      return DEFAULT_SHOP_ID;
+    }
+  });
+  const [availableTills, setAvailableTills] = useState<TerminalTillOption[]>([]);
+  const [availableShops, setAvailableShops] = useState<TerminalShopOption[]>([]);
   const [shift, setShift] = useState<ShiftInfo | null>(null);
   const [showShiftModal, setShowShiftModal] = useState(false);
 
@@ -149,10 +181,33 @@ function AppContent() {
     }
   };
 
-  // Sync active till shift whenever Cashier logs in
+  // Load available branches/tills when Cashier logs in (enables simultaneous multi-till terminals)
   useEffect(() => {
     if (session?.role === 'CASHIER') {
-      apiFetch(`/api/shifts/current?tillId=${TILL_ID}`)
+      apiFetch('/api/branches')
+        .then((res) => (res.ok ? res.json().catch(() => null) : null))
+        .then((data: { shops?: TerminalShopOption[]; tills?: TerminalTillOption[] } | null) => {
+          if (!data) return;
+          if (Array.isArray(data.shops)) setAvailableShops(data.shops);
+          if (Array.isArray(data.tills) && data.tills.length > 0) {
+            setAvailableTills(data.tills);
+            const matched = data.tills.find((t) => t.id === selectedTillId);
+            if (matched) {
+              setSelectedShopId(matched.shopId);
+            } else {
+              setSelectedTillId(data.tills[0].id);
+              setSelectedShopId(data.tills[0].shopId);
+            }
+          }
+        })
+        .catch(() => {});
+    }
+  }, [session?.role, selectedTillId]);
+
+  // Sync active till shift whenever Cashier logs in or switches workstation till
+  useEffect(() => {
+    if (session?.role === 'CASHIER') {
+      apiFetch(`/api/shifts/current?tillId=${encodeURIComponent(selectedTillId)}`)
         .then((res) => {
           if (res.status === 204) return null;
           return res.ok ? res.json().catch(() => null) : null;
@@ -168,7 +223,20 @@ function AppContent() {
     } else {
       setShift(null);
     }
-  }, [session]);
+  }, [session, selectedTillId]);
+
+  const handleSelectTerminalTill = (tillId: string) => {
+    const found = availableTills.find((t) => t.id === tillId);
+    const shopId = found ? found.shopId : DEFAULT_SHOP_ID;
+    setSelectedTillId(tillId);
+    setSelectedShopId(shopId);
+    try {
+      localStorage.setItem(TERMINAL_TILL_STORAGE_KEY, tillId);
+      localStorage.setItem(TERMINAL_SHOP_STORAGE_KEY, shopId);
+    } catch {
+      // Ignore storage quota restrictions
+    }
+  };
 
   const handleSelectProduct = (product: ProductDto) => {
     playPosBeep();
@@ -460,6 +528,30 @@ function AppContent() {
             </button>
           )}
 
+          {session.role === 'CASHIER' && availableTills.length > 1 && (
+            <select
+              value={selectedTillId}
+              disabled={Boolean(shift)}
+              onChange={(e) => handleSelectTerminalTill(e.target.value)}
+              title={
+                shift
+                  ? 'Close active shift before switching workstation till'
+                  : 'Select physical workstation till'
+              }
+              className="text-xs px-2.5 py-1.5 rounded-lg bg-slate-950 text-slate-200 border border-slate-700 font-semibold disabled:opacity-60"
+            >
+              {availableTills.map((t) => {
+                const branch = availableShops.find((s) => s.id === t.shopId);
+                return (
+                  <option key={t.id} value={t.id}>
+                    {branch ? `${branch.code} · ` : ''}
+                    {t.label || t.tillNumber}
+                  </option>
+                );
+              })}
+            </select>
+          )}
+
           {session.role === 'CASHIER' && (
             <button
               onClick={() => setShowShiftModal(true)}
@@ -557,7 +649,7 @@ function AppContent() {
         <CashierShiftModal
           currentCashier={cashierProfile}
           currentShift={shift}
-          tillId={TILL_ID}
+          tillId={selectedTillId}
           onLoginSuccess={() => {}}
           onOpenShiftSuccess={(s) => {
             setShift(s);
@@ -578,7 +670,8 @@ function AppContent() {
         <CheckoutModal
           cart={cart}
           totalKes={totalKes}
-          tillId={TILL_ID}
+          shopId={selectedShopId}
+          tillId={selectedTillId}
           cashierId={session.cashierId}
           cashierName={session.name}
           authToken={session.token}

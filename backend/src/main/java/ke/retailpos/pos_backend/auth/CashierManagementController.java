@@ -8,6 +8,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import ke.retailpos.pos_backend.audit.AuditLogService;
+import ke.retailpos.pos_backend.config.JwtAuthFilter;
 import ke.retailpos.pos_backend.shift.Shift;
 import ke.retailpos.pos_backend.shift.ShiftRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -123,6 +124,7 @@ public class CashierManagementController {
       c.setStatus("ACTIVE");
       c.setActive(true);
       cashierRepository.save(c);
+      JwtAuthFilter.evictCashier(c.getId());
       rateLimiter.reset(c.getUsername());
       if (auditLogService != null) {
         auditLogService.record("AUTHORIZE_CASHIER", "cashier", c.getId().toString(), "Authorized @" + c.getUsername());
@@ -179,6 +181,7 @@ public class CashierManagementController {
         c.setActive(false);
         c.setStatus("DELETED");
         cashierRepository.save(c);
+        JwtAuthFilter.evictCashier(c.getId());
         rateLimiter.reset(c.getUsername());
         if (auditLogService != null) {
           auditLogService.record("SOFT_DELETE_CASHIER", "cashier", c.getId().toString(), "Archived @" + c.getUsername());
@@ -191,6 +194,7 @@ public class CashierManagementController {
       } else {
         // Hard delete if no financial history
         cashierRepository.delete(c);
+        JwtAuthFilter.evictCashier(id);
         rateLimiter.reset(c.getUsername());
         if (auditLogService != null) {
           auditLogService.record("DELETE_CASHIER", "cashier", id.toString(), "Deleted @" + c.getUsername());

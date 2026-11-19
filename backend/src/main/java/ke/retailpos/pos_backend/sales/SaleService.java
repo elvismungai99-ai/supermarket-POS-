@@ -166,9 +166,22 @@ public class SaleService {
     shifts.findFirstByTillIdAndStatusOrderByOpenedAtDesc(req.tillId(), "OPEN")
         .orElseThrow(() -> new IllegalStateException("Till " + req.tillId() + " does not have an active open shift"));
 
-    // Resolve products and build pricing request (strict server catalog pricing + verified discount overrides)
-    List<PricingService.LinePricingRequest> pricingRequests = new ArrayList<>();
+    // Pre-lock distinct products in deterministic UUID order (prevents deadlocks & lost-update stock races)
     Map<UUID, Product> productMap = new HashMap<>();
+    req.items().stream()
+        .map(CreateSaleRequest.SaleItemRequest::productId)
+        .filter(Objects::nonNull)
+        .distinct()
+        .sorted()
+        .forEach(pid -> {
+          Product locked = products.findByIdForUpdate(pid)
+              .or(() -> products.findById(pid))
+              .orElseThrow(() -> new IllegalArgumentException("Product not found: " + pid));
+          productMap.put(locked.getId(), locked);
+        });
+
+    // Build pricing request (strict server catalog pricing + verified discount overrides)
+    List<PricingService.LinePricingRequest> pricingRequests = new ArrayList<>();
     List<BigDecimal> lineDiscounts = new ArrayList<>();
     BigDecimal totalSaleDiscount = BigDecimal.ZERO;
     boolean needsOverrideAuth = false;
@@ -177,9 +190,12 @@ public class SaleService {
       if (itemReq.quantity() == null || itemReq.quantity().compareTo(BigDecimal.ZERO) <= 0) {
         throw new IllegalArgumentException("Item quantity must be greater than zero");
       }
-      Product product = products.findById(itemReq.productId())
-          .orElseThrow(() -> new IllegalArgumentException("Product not found: " + itemReq.productId()));
-      productMap.put(product.getId(), product);
+      Product product = productMap.get(itemReq.productId());
+      if (product == null) {
+        product = products.findById(itemReq.productId())
+            .orElseThrow(() -> new IllegalArgumentException("Product not found: " + itemReq.productId()));
+        productMap.put(product.getId(), product);
+      }
 
       BigDecimal catalogPrice = product.getPriceKes();
       BigDecimal disc = itemReq.discountKes() != null ? itemReq.discountKes() : BigDecimal.ZERO;
