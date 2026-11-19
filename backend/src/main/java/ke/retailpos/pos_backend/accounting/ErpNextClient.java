@@ -58,8 +58,27 @@ public class ErpNextClient {
       String costCenter,
       double qty,
       double rate,
-      boolean submitOnPost
-  ) {}
+      boolean submitOnPost,
+      double vatRate,
+      String inputVatAccount
+  ) {
+    public PurchaseInvoicePayload(
+        String company,
+        String supplierName,
+        String supplierInvoiceNo,
+        String postingDate,
+        String itemName,
+        String expenseOrInventoryAccount,
+        String payableAccount,
+        String costCenter,
+        double qty,
+        double rate,
+        boolean submitOnPost
+    ) {
+      this(company, supplierName, supplierInvoiceNo, postingDate, itemName,
+          expenseOrInventoryAccount, payableAccount, costCenter, qty, rate, submitOnPost, 0.0, null);
+    }
+  }
 
   public ErpNextResponse postJournalEntry(
       String baseUrl,
@@ -90,12 +109,28 @@ public class ErpNextClient {
     String url = cleanBaseUrl + "/api/resource/Journal%20Entry";
 
     try {
+      // ERPNext-side idempotency lookup: prevent duplicate Journal Entries if an earlier request timed out after commit
+      if (journalEntry.referenceKey() != null && !journalEntry.referenceKey().isBlank()) {
+        Optional<String> existing = findExistingByField(
+            cleanBaseUrl, apiKey, apiSecret, "Journal%20Entry", "cheque_no", journalEntry.referenceKey()
+        );
+        if (existing.isPresent()) {
+          log.info("Idempotency hit in ERPNext: Journal Entry {} already exists for ref {}",
+              existing.get(), journalEntry.referenceKey());
+          return new ErpNextResponse(true, existing.get(), null, 200);
+        }
+      }
+
       Map<String, Object> payload = new LinkedHashMap<>();
       payload.put("doctype", "Journal Entry");
       payload.put("voucher_type", journalEntry.voucherType());
       payload.put("posting_date", journalEntry.postingDate().toString());
       payload.put("company", journalEntry.company());
       payload.put("user_remark", journalEntry.userRemark());
+      if (journalEntry.referenceKey() != null && !journalEntry.referenceKey().isBlank()) {
+        payload.put("cheque_no", journalEntry.referenceKey());
+        payload.put("cheque_date", journalEntry.postingDate().toString());
+      }
       payload.put("docstatus", submitOnPost ? 1 : 0);
 
       List<Map<String, Object>> accountLines = new ArrayList<>();
@@ -144,8 +179,9 @@ public class ErpNextClient {
         return new ErpNextResponse(false, null, "ERPNext HTTP " + status + ": " + errDetail, status);
       }
     } catch (Exception e) {
-      log.warn("Failed to communicate with ERPNext server at {}: {}", url, e.getMessage());
-      return new ErpNextResponse(false, null, "Network or server connection failed: " + e.getMessage(), 503);
+      String detail = describeException(e, cleanBaseUrl);
+      log.warn("Failed to communicate with ERPNext server at {}: {}", url, detail);
+      return new ErpNextResponse(false, null, "Network or server connection failed: " + detail, 503);
     }
   }
 
@@ -180,7 +216,7 @@ public class ErpNextClient {
         return new ConnectionTestResult(false, "ERPNext responded with HTTP " + response.statusCode() + ": " + response.body(), response.statusCode());
       }
     } catch (Exception e) {
-      return new ConnectionTestResult(false, "Connection error: " + e.getMessage() + " (Is ERPNext running at " + cleanBaseUrl + "?)", 503);
+      return new ConnectionTestResult(false, "Connection error: " + describeException(e, cleanBaseUrl), 503);
     }
   }
 
@@ -247,12 +283,12 @@ public class ErpNextClient {
       return new AccountVerificationResult(true, matched, missing, msg);
     } catch (Exception e) {
       return new AccountVerificationResult(false, List.of(), requiredAccounts,
-          "Could not reach ERPNext at " + cleanBaseUrl + ": " + e.getMessage());
+          "Could not reach ERPNext at " + cleanBaseUrl + ": " + describeException(e, cleanBaseUrl));
     }
   }
 
   /**
-   * Posts a Supplier Purchase Invoice / Stock Receipt to ERPNext (non-eTIMS purchase accounting).
+   * Posts a Supplier Purchase Invoice / Stock Receipt to ERPNext (GL accounting with Input VAT taxes).
    */
   public ErpNextResponse postPurchaseInvoice(
       String baseUrl,
@@ -267,6 +303,18 @@ public class ErpNextClient {
     String url = cleanBaseUrl + "/api/resource/Purchase%20Invoice";
 
     try {
+      // ERPNext-side idempotency lookup by supplier invoice / bill_no
+      if (invoice.supplierInvoiceNo() != null && !invoice.supplierInvoiceNo().isBlank()) {
+        Optional<String> existing = findExistingByField(
+            cleanBaseUrl, apiKey, apiSecret, "Purchase%20Invoice", "bill_no", invoice.supplierInvoiceNo().trim()
+        );
+        if (existing.isPresent()) {
+          log.info("Idempotency hit in ERPNext: Purchase Invoice {} already exists for bill_no {}",
+              existing.get(), invoice.supplierInvoiceNo());
+          return new ErpNextResponse(true, existing.get(), null, 200);
+        }
+      }
+
       Map<String, Object> itemRow = new LinkedHashMap<>();
       itemRow.put("item_name", invoice.itemName());
       itemRow.put("qty", invoice.qty());
@@ -278,13 +326,23 @@ public class ErpNextClient {
       payload.put("doctype", "Purchase Invoice");
       payload.put("supplier", invoice.supplierName());
       if (invoice.supplierInvoiceNo() != null && !invoice.supplierInvoiceNo().isBlank()) {
-        payload.put("bill_no", invoice.supplierInvoiceNo());
+        payload.put("bill_no", invoice.supplierInvoiceNo().trim());
       }
       payload.put("posting_date", invoice.postingDate());
       payload.put("company", invoice.company());
       payload.put("credit_to", invoice.payableAccount());
       payload.put("docstatus", invoice.submitOnPost() ? 1 : 0);
       payload.put("items", List.of(itemRow));
+
+      if (invoice.vatRate() > 0 && invoice.inputVatAccount() != null && !invoice.inputVatAccount().isBlank()) {
+        double pct = Math.round(invoice.vatRate() * 10000.0) / 100.0;
+        Map<String, Object> taxRow = new LinkedHashMap<>();
+        taxRow.put("charge_type", "On Net Total");
+        taxRow.put("account_head", invoice.inputVatAccount());
+        taxRow.put("rate", pct);
+        taxRow.put("description", "Input VAT " + pct + "%");
+        payload.put("taxes", List.of(taxRow));
+      }
 
       String requestJson = objectMapper.writeValueAsString(payload);
       HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
@@ -308,7 +366,60 @@ public class ErpNextClient {
         return new ErpNextResponse(false, null, "ERPNext HTTP " + status + ": " + response.body(), status);
       }
     } catch (Exception e) {
-      return new ErpNextResponse(false, null, "Failed to post Purchase Invoice to ERPNext: " + e.getMessage(), 503);
+      return new ErpNextResponse(false, null, "Failed to post Purchase Invoice to ERPNext: " + describeException(e, cleanBaseUrl), 503);
     }
+  }
+
+  private Optional<String> findExistingByField(
+      String cleanBaseUrl,
+      String apiKey,
+      String apiSecret,
+      String docTypePath,
+      String fieldName,
+      String value
+  ) {
+    try {
+      String sanitizedVal = value.replace("\"", "").trim();
+      String encodedFilters = java.net.URLEncoder.encode(
+          "[[\"" + fieldName + "\",\"=\",\"" + sanitizedVal + "\"],[\"docstatus\",\"!=\",2]]",
+          java.nio.charset.StandardCharsets.UTF_8
+      );
+      String encodedFields = java.net.URLEncoder.encode("[\"name\"]", java.nio.charset.StandardCharsets.UTF_8);
+      String url = cleanBaseUrl + "/api/resource/" + docTypePath
+          + "?filters=" + encodedFilters + "&fields=" + encodedFields + "&limit_page_length=1";
+
+      HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
+          .uri(URI.create(url))
+          .header("Accept", "application/json")
+          .timeout(Duration.ofSeconds(5))
+          .GET();
+      if (apiKey != null && !apiKey.isBlank() && apiSecret != null && !apiSecret.isBlank()) {
+        reqBuilder.header("Authorization", "token " + apiKey.trim() + ":" + apiSecret.trim());
+      }
+
+      HttpResponse<String> response = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+      if (response.statusCode() >= 200 && response.statusCode() < 300) {
+        JsonNode data = objectMapper.readTree(response.body()).path("data");
+        if (data.isArray() && !data.isEmpty()) {
+          String name = data.get(0).path("name").asText("");
+          if (!name.isBlank()) {
+            return Optional.of(name);
+          }
+        }
+      }
+    } catch (Exception ignored) {
+      // Let the primary POST attempt surface connectivity errors
+    }
+    return Optional.empty();
+  }
+
+  private static String describeException(Exception e, String cleanBaseUrl) {
+    if (e instanceof java.net.ConnectException || e.getCause() instanceof java.net.ConnectException) {
+      return "Connection refused — ensure ERPNext is running at " + cleanBaseUrl;
+    }
+    if (e.getMessage() != null && !e.getMessage().isBlank()) {
+      return e.getMessage();
+    }
+    return e.getClass().getSimpleName() + " contacting " + cleanBaseUrl;
   }
 }

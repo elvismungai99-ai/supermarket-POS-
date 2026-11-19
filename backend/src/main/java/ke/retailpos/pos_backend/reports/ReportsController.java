@@ -8,6 +8,7 @@ import java.time.YearMonth;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import ke.retailpos.pos_backend.outbox.OutboxProcessor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -22,15 +23,25 @@ public class ReportsController {
 
   private final JdbcTemplate jdbcTemplate;
   private final MonthlyTaxService monthlyTaxService;
+  private final OutboxProcessor outboxProcessor;
 
   public ReportsController(JdbcTemplate jdbcTemplate) {
-    this(jdbcTemplate, null);
+    this(jdbcTemplate, null, null);
+  }
+
+  public ReportsController(JdbcTemplate jdbcTemplate, MonthlyTaxService monthlyTaxService) {
+    this(jdbcTemplate, monthlyTaxService, null);
   }
 
   @Autowired
-  public ReportsController(JdbcTemplate jdbcTemplate, MonthlyTaxService monthlyTaxService) {
+  public ReportsController(
+      JdbcTemplate jdbcTemplate,
+      MonthlyTaxService monthlyTaxService,
+      OutboxProcessor outboxProcessor
+  ) {
     this.jdbcTemplate = jdbcTemplate;
     this.monthlyTaxService = monthlyTaxService;
+    this.outboxProcessor = outboxProcessor;
   }
 
   public record DailySalesSummary(
@@ -256,16 +267,41 @@ public class ReportsController {
       long pendingCount,
       long sentCount,
       long totalCount,
-      String status
-  ) {}
+      String status,
+      long failedCount
+  ) {
+    public OutboxStatusDto(long pendingCount, long sentCount, long totalCount, String status) {
+      this(pendingCount, sentCount, totalCount, status, 0L);
+    }
+  }
 
   @GetMapping("/outbox-status")
   public OutboxStatusDto getOutboxStatus() {
-    Long pending = jdbcTemplate.queryForObject("select count(*) from outbox where sent_at is null", Long.class);
+    Long pending = jdbcTemplate.queryForObject(
+        "select count(*) from outbox where sent_at is null and failed_permanently = false", Long.class);
+    Long failed = jdbcTemplate.queryForObject(
+        "select count(*) from outbox where sent_at is null and failed_permanently = true", Long.class);
     Long sent = jdbcTemplate.queryForObject("select count(*) from outbox where sent_at is not null", Long.class);
     long p = pending != null ? pending : 0L;
+    long f = failed != null ? failed : 0L;
     long s = sent != null ? sent : 0L;
-    String status = p == 0 ? "SYNCED" : "OFFLINE_QUEUED_PENDING_DISPATCH";
-    return new OutboxStatusDto(p, s, p + s, status);
+    String status = f > 0
+        ? "ATTENTION_REQUIRED_DEAD_LETTER"
+        : (p == 0 ? "SYNCED" : "OFFLINE_QUEUED_PENDING_DISPATCH");
+    return new OutboxStatusDto(p, s, p + f + s, status, f);
+  }
+
+  @PostMapping("/outbox/retry-failed")
+  public ResponseEntity<?> retryFailedOutbox() {
+    if (outboxProcessor == null) {
+      return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(Map.of("message", "OutboxProcessor unavailable"));
+    }
+    int requeued = outboxProcessor.retryFailedEntries();
+    return ResponseEntity.ok(Map.of(
+        "requeuedCount", requeued,
+        "message", requeued > 0
+            ? "Requeued " + requeued + " dead-letter outbox item(s) for retry."
+            : "No dead-letter outbox items to retry."
+    ));
   }
 }

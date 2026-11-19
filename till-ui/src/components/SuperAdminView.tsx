@@ -32,6 +32,7 @@ export interface OutboxStatus {
   pendingCount: number;
   sentCount: number;
   totalCount: number;
+  failedCount?: number;
   status: string;
 }
 
@@ -80,6 +81,7 @@ export function SuperAdminView({ authToken }: SuperAdminViewProps) {
   const [backendHealthy, setBackendHealthy] = useState<boolean>(true);
   const [erpConnected, setErpConnected] = useState<boolean | null>(null);
   const [pinging, setPinging] = useState(false);
+  const [retryingOutbox, setRetryingOutbox] = useState(false);
 
   // Admin user provisioning form
   const [provName, setProvName] = useState('');
@@ -154,6 +156,24 @@ export function SuperAdminView({ authToken }: SuperAdminViewProps) {
       showToast(err instanceof Error ? err.message : 'Could not disable MFA', 'error');
     } finally {
       setMfaBusy(false);
+    }
+  };
+
+  const handleRetryFailedOutbox = async () => {
+    setRetryingOutbox(true);
+    try {
+      const res = await apiFetch('/api/reports/outbox/retry-failed', { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || 'Could not re-queue failed outbox entries');
+      showToast(
+        `Re-queued ${data.requeued ?? 0} failed outbox entr${data.requeued === 1 ? 'y' : 'ies'} for immediate retry.`,
+        'success'
+      );
+      await loadData();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : 'Outbox retry failed', 'error');
+    } finally {
+      setRetryingOutbox(false);
     }
   };
 
@@ -676,19 +696,36 @@ export function SuperAdminView({ authToken }: SuperAdminViewProps) {
         <>
           {/* Top KPI Row */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-            <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 shadow-xl flex items-center justify-between">
-              <div>
+            <div className="bg-slate-900 p-5 rounded-2xl border border-slate-800 shadow-xl flex items-center justify-between gap-2">
+              <div className="min-w-0">
                 <p className="text-xs uppercase text-slate-400 font-semibold tracking-wider">
                   Offline Outbox Queue
                 </p>
-                <p className="text-xl font-black font-mono text-emerald-400 mt-1">
+                <p
+                  className={`text-xl font-black font-mono mt-1 ${
+                    (outboxStatus?.failedCount ?? 0) > 0 ? 'text-rose-400' : 'text-emerald-400'
+                  }`}
+                >
                   {outboxStatus?.status || 'CONNECTED'}
                 </p>
                 <p className="text-[11px] text-slate-400 mt-0.5">
-                  Processed: {outboxStatus?.sentCount ?? 0} | Pending: {outboxStatus?.pendingCount ?? 0}
+                  Processed: {outboxStatus?.sentCount ?? 0} | Pending: {outboxStatus?.pendingCount ?? 0} | Dead-Letter:{' '}
+                  <span className={(outboxStatus?.failedCount ?? 0) > 0 ? 'text-rose-400 font-bold' : ''}>
+                    {outboxStatus?.failedCount ?? 0}
+                  </span>
                 </p>
+                {(outboxStatus?.failedCount ?? 0) > 0 && (
+                  <button
+                    type="button"
+                    disabled={retryingOutbox}
+                    onClick={handleRetryFailedOutbox}
+                    className="mt-2 px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-500/40 text-rose-300 text-[11px] font-semibold transition disabled:opacity-50"
+                  >
+                    {retryingOutbox ? 'Retrying...' : '↻ Retry Failed'}
+                  </button>
+                )}
               </div>
-              <div className="w-12 h-12 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center text-2xl">
+              <div className="w-12 h-12 shrink-0 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 flex items-center justify-center text-2xl">
                 📡
               </div>
             </div>

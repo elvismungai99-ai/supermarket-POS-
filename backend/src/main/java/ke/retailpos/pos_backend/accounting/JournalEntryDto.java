@@ -14,8 +14,24 @@ public record JournalEntryDto(
     BigDecimal totalDebit,
     BigDecimal totalCredit,
     BigDecimal difference,
-    boolean isBalanced
+    boolean isBalanced,
+    String referenceKey
 ) {
+
+  public JournalEntryDto(
+      String doctype,
+      String voucherType,
+      LocalDate postingDate,
+      String company,
+      String userRemark,
+      List<JournalAccountLineDto> accounts,
+      BigDecimal totalDebit,
+      BigDecimal totalCredit,
+      BigDecimal difference,
+      boolean isBalanced
+  ) {
+    this(doctype, voucherType, postingDate, company, userRemark, accounts, totalDebit, totalCredit, difference, isBalanced, null);
+  }
 
   public record JournalAccountLineDto(
       String account,
@@ -30,6 +46,16 @@ public record JournalEntryDto(
       LocalDate postingDate,
       String userRemark,
       List<JournalAccountLineDto> lines
+  ) {
+    return of(company, postingDate, userRemark, lines, null);
+  }
+
+  public static JournalEntryDto of(
+      String company,
+      LocalDate postingDate,
+      String userRemark,
+      List<JournalAccountLineDto> lines,
+      String referenceKey
   ) {
     BigDecimal totalDebit = BigDecimal.ZERO;
     BigDecimal totalCredit = BigDecimal.ZERO;
@@ -56,7 +82,8 @@ public record JournalEntryDto(
         totalDebit,
         totalCredit,
         totalDebit.subtract(totalCredit),
-        balanced
+        balanced,
+        referenceKey
     );
   }
 }

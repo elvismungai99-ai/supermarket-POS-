@@ -16,12 +16,15 @@ import ke.retailpos.pos_backend.accounting.ErpNextClient;
 import ke.retailpos.pos_backend.audit.AuditLogService;
 import ke.retailpos.pos_backend.product.Product;
 import ke.retailpos.pos_backend.product.ProductRepository;
+import ke.retailpos.pos_backend.sales.Outbox;
+import ke.retailpos.pos_backend.sales.OutboxRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
+import tools.jackson.databind.ObjectMapper;
 
 @RestController
 @RequestMapping("/api/inventory")
@@ -34,6 +37,8 @@ public class StockReceivingController {
   private final ProductBatchRepository batchRepository;
   private final AuditLogService auditLogService;
   private final JdbcTemplate jdbcTemplate;
+  private final OutboxRepository outboxRepository;
+  private final ObjectMapper objectMapper;
 
   public StockReceivingController(
       StockReceiptRepository receipts,
@@ -41,7 +46,7 @@ public class StockReceivingController {
       AccountingService accountingService,
       ErpNextClient erpNextClient
   ) {
-    this(receipts, products, accountingService, erpNextClient, null, null, null);
+    this(receipts, products, accountingService, erpNextClient, null, null, null, null, null);
   }
 
   public StockReceivingController(
@@ -52,7 +57,19 @@ public class StockReceivingController {
       ProductBatchRepository batchRepository,
       AuditLogService auditLogService
   ) {
-    this(receipts, products, accountingService, erpNextClient, batchRepository, auditLogService, null);
+    this(receipts, products, accountingService, erpNextClient, batchRepository, auditLogService, null, null, null);
+  }
+
+  public StockReceivingController(
+      StockReceiptRepository receipts,
+      ProductRepository products,
+      AccountingService accountingService,
+      ErpNextClient erpNextClient,
+      ProductBatchRepository batchRepository,
+      AuditLogService auditLogService,
+      JdbcTemplate jdbcTemplate
+  ) {
+    this(receipts, products, accountingService, erpNextClient, batchRepository, auditLogService, jdbcTemplate, null, null);
   }
 
   @Autowired
@@ -63,7 +80,9 @@ public class StockReceivingController {
       ErpNextClient erpNextClient,
       ProductBatchRepository batchRepository,
       AuditLogService auditLogService,
-      JdbcTemplate jdbcTemplate
+      JdbcTemplate jdbcTemplate,
+      OutboxRepository outboxRepository,
+      ObjectMapper objectMapper
   ) {
     this.receipts = receipts;
     this.products = products;
@@ -72,6 +91,8 @@ public class StockReceivingController {
     this.batchRepository = batchRepository;
     this.auditLogService = auditLogService;
     this.jdbcTemplate = jdbcTemplate;
+    this.outboxRepository = outboxRepository;
+    this.objectMapper = objectMapper;
   }
 
   public record NewProductInput(
@@ -318,13 +339,34 @@ public class StockReceivingController {
     }).orElse(ResponseEntity.notFound().build());
   }
 
+  @Transactional
+  public boolean retryErpNextPostForReceipt(UUID receiptId) {
+    var opt = receipts.findById(receiptId);
+    if (opt.isEmpty()) return true;
+    StockReceipt sr = opt.get();
+    if ("POSTED".equalsIgnoreCase(sr.getErpnextStatus()) && sr.getErpnextPurchaseInvoiceId() != null) {
+      return true;
+    }
+    boolean ok = syncReceiptToErpNext(sr, false);
+    receipts.save(sr);
+    return ok;
+  }
+
   private void syncReceiptToErpNext(StockReceipt sr) {
+    syncReceiptToErpNext(sr, true);
+  }
+
+  private boolean syncReceiptToErpNext(StockReceipt sr, boolean enqueueOnFailure) {
     AccountingConfig cfg = accountingService.getAccountingConfig();
     String decryptedSecret = accountingService.getDecryptedApiSecret(cfg);
+    String billNo = (sr.getSupplierInvoiceNo() != null && !sr.getSupplierInvoiceNo().isBlank())
+        ? sr.getSupplierInvoiceNo().trim()
+        : "POS-GRN-" + sr.getId().toString().substring(0, 8).toUpperCase();
+
     ErpNextClient.PurchaseInvoicePayload payload = new ErpNextClient.PurchaseInvoicePayload(
         cfg.getCompanyName(),
         sr.getSupplierName(),
-        sr.getSupplierInvoiceNo(),
+        billNo,
         LocalDate.now(AccountingService.KENYA_ZONE).toString(),
         sr.getProduct().getName(),
         cfg.getAccountInventory(),
@@ -332,7 +374,9 @@ public class StockReceivingController {
         cfg.getAccountCostCenter(),
         sr.getQuantity().doubleValue(),
         sr.getUnitCostKes().doubleValue(),
-        cfg.isSubmitOnPost()
+        cfg.isSubmitOnPost(),
+        sr.getVatRate() != null ? sr.getVatRate().doubleValue() : 0.0,
+        cfg.getAccountInputVat()
     );
     ErpNextClient.ErpNextResponse res = erpNextClient.postPurchaseInvoice(
         cfg.getErpnextBaseUrl(),
@@ -344,9 +388,30 @@ public class StockReceivingController {
       sr.setErpnextStatus("POSTED");
       sr.setErpnextPurchaseInvoiceId(res.journalEntryId());
       sr.setErrorMessage(null);
+      return true;
     } else {
-      sr.setErpnextStatus("FAILED");
       sr.setErrorMessage(res.errorMessage());
+      if (enqueueOnFailure && outboxRepository != null && objectMapper != null) {
+        sr.setErpnextStatus("QUEUED");
+        boolean alreadyQueued = outboxRepository.findBySentAtIsNull().stream()
+            .anyMatch(o -> "accounting.erpnext.purchase_invoice".equals(o.getTopic())
+                && o.getPayload().contains(sr.getId().toString()));
+        if (!alreadyQueued) {
+          try {
+            String outboxJson = objectMapper.writeValueAsString(
+                java.util.Map.of("receiptId", sr.getId().toString(), "billNo", billNo)
+            );
+            Outbox row = new Outbox(UUID.randomUUID(), "accounting.erpnext.purchase_invoice", outboxJson, Instant.now(), null);
+            row.setNextRetryAt(Instant.now().plusSeconds(15));
+            outboxRepository.save(row);
+          } catch (Exception ignored) {
+            sr.setErpnextStatus("FAILED");
+          }
+        }
+      } else {
+        sr.setErpnextStatus("FAILED");
+      }
+      return false;
     }
   }
 

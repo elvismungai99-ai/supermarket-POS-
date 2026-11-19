@@ -40,6 +40,24 @@ export interface ExpiringBatchItem {
   unitCostKes: number;
 }
 
+export type StockAdjustmentType = 'SHRINKAGE' | 'EXPIRED' | 'DAMAGED' | 'CYCLE_COUNT';
+
+export interface StockAdjustmentItem {
+  id: string;
+  productId: string;
+  productName: string;
+  adjustmentType: StockAdjustmentType;
+  quantityDelta: number;
+  unitCostKes: number;
+  totalCostKes: number;
+  reason: string;
+  recordedByUsername?: string | null;
+  erpnextJournalEntryId?: string | null;
+  erpnextStatus: string;
+  errorMessage?: string | null;
+  createdAt: string;
+}
+
 export function ManagerInventoryView() {
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [lowStock, setLowStock] = useState<ProductItem[]>([]);
@@ -73,6 +91,16 @@ export function ManagerInventoryView() {
   const [recBatchNo, setRecBatchNo] = useState('');
   const [recExpiryDate, setRecExpiryDate] = useState('');
   const [recPostErpNext, setRecPostErpNext] = useState(false);
+
+  // Stock Adjustments (Shrinkage / Expired / Damaged / Cycle Count)
+  const [adjustments, setAdjustments] = useState<StockAdjustmentItem[]>([]);
+  const [showAdjustModal, setShowAdjustModal] = useState(false);
+  const [adjProductId, setAdjProductId] = useState('');
+  const [adjType, setAdjType] = useState<StockAdjustmentType>('SHRINKAGE');
+  const [adjQty, setAdjQty] = useState('1');
+  const [adjReason, setAdjReason] = useState('');
+  const [adjPostErpNext, setAdjPostErpNext] = useState(true);
+  const [adjSubmitting, setAdjSubmitting] = useState(false);
 
   // New product form
   const [showAddModal, setShowAddModal] = useState(false);
@@ -138,11 +166,12 @@ export function ManagerInventoryView() {
   const fetchInventory = async () => {
     setLoading(true);
     try {
-      const [prodRes, lowRes, recRes, expRes] = await Promise.all([
+      const [prodRes, lowRes, recRes, expRes, adjRes] = await Promise.all([
         apiFetch('/api/products'),
         apiFetch('/api/products/low-stock'),
         apiFetch('/api/inventory/receipts'),
         apiFetch('/api/inventory/expiring?days=14'),
+        apiFetch('/api/inventory/adjustments?limit=50'),
       ]);
       if (prodRes.ok) {
         const list: ProductItem[] = await prodRes.json();
@@ -156,6 +185,9 @@ export function ManagerInventoryView() {
       }
       if (expRes.ok) {
         setExpiringBatches(await expRes.json());
+      }
+      if (adjRes.ok) {
+        setAdjustments(await adjRes.json());
       }
     } catch {
       setMsg({ type: 'error', text: 'Failed to load product inventory' });
@@ -324,6 +356,55 @@ export function ManagerInventoryView() {
     }
   };
 
+  const handleRecordAdjustment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!adjProductId) {
+      setMsg({ type: 'error', text: 'Please select a product to adjust.' });
+      return;
+    }
+    const parsedQty = parseFloat(adjQty);
+    if (!Number.isFinite(parsedQty) || parsedQty === 0) {
+      setMsg({ type: 'error', text: 'Please enter a non-zero quantity.' });
+      return;
+    }
+    setAdjSubmitting(true);
+    try {
+      const res = await apiFetch('/api/inventory/adjustments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          productId: adjProductId,
+          adjustmentType: adjType,
+          quantityDelta: parsedQty,
+          reason: adjReason.trim(),
+          postToErpNext: adjPostErpNext,
+        }),
+      });
+      const data: Partial<StockAdjustmentItem> & { message?: string } = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || 'Failed to record stock adjustment');
+      const erpNote =
+        data.erpnextStatus === 'POSTED'
+          ? ` ERPNext GL Journal Entry: ${data.erpnextJournalEntryId ?? 'POSTED'}.`
+          : data.erpnextStatus === 'QUEUED'
+          ? ' Queued in Outbox for automatic ERPNext GL retry.'
+          : '';
+      setMsg({
+        type: 'success',
+        text: `Recorded ${adjType} adjustment for "${data.productName ?? 'product'}".${erpNote}`,
+      });
+      setShowAdjustModal(false);
+      setAdjProductId('');
+      setAdjType('SHRINKAGE');
+      setAdjQty('1');
+      setAdjReason('');
+      fetchInventory();
+    } catch (err: unknown) {
+      setMsg({ type: 'error', text: err instanceof Error ? err.message : 'Stock adjustment failed' });
+    } finally {
+      setAdjSubmitting(false);
+    }
+  };
+
   const handleCreateProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -444,7 +525,13 @@ export function ManagerInventoryView() {
               Kenyan tax rates: Cat A (16% Standard), Cat B (0% Zero-Rated), Cat E (VAT Exempt).
             </p>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setShowAdjustModal(true)}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5"
+            >
+              <span>📉</span> Stock Adjustment
+            </button>
             <button
               onClick={() => setShowReceiveModal(true)}
               className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold text-xs rounded-xl shadow-xs transition flex items-center gap-1.5"
@@ -681,6 +768,83 @@ export function ManagerInventoryView() {
                 ))}
               </tbody>
             </table>
+          )}
+        </div>
+
+        {/* Recent Stock Adjustments & Shrinkage (GL) */}
+        <div className="mt-6 bg-white dark:bg-zinc-900 rounded-2xl border border-zinc-200 dark:border-zinc-800 shadow-xs overflow-hidden">
+          <div className="px-4 py-3 border-b border-zinc-200 dark:border-zinc-800 flex items-center justify-between">
+            <h3 className="text-xs font-bold uppercase tracking-wider text-zinc-500">
+              Recent Stock Adjustments &amp; Shrinkage (GL-Only ERPNext)
+            </h3>
+            <span className="text-xs text-zinc-400">{adjustments.length} recorded</span>
+          </div>
+          {adjustments.length === 0 ? (
+            <div className="p-6 text-center text-xs text-zinc-400">
+              No shrinkage, expiry write-offs, damage, or cycle-count adjustments recorded yet.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-zinc-50 dark:bg-zinc-950 text-zinc-500 border-b border-zinc-200 dark:border-zinc-800">
+                    <th className="py-2.5 px-4 font-semibold">Date</th>
+                    <th className="py-2.5 px-4 font-semibold">Product</th>
+                    <th className="py-2.5 px-4 font-semibold">Type</th>
+                    <th className="py-2.5 px-4 font-semibold text-right">Qty Delta</th>
+                    <th className="py-2.5 px-4 font-semibold text-right">Cost Impact (KES)</th>
+                    <th className="py-2.5 px-4 font-semibold">Reason</th>
+                    <th className="py-2.5 px-4 font-semibold">ERPNext GL</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100 dark:divide-zinc-800/60">
+                  {adjustments.slice(0, 15).map((adj) => (
+                    <tr key={adj.id} className="hover:bg-zinc-50 dark:hover:bg-zinc-800/30">
+                      <td className="py-2.5 px-4 font-mono text-zinc-500">
+                        {new Date(adj.createdAt).toLocaleString()}
+                      </td>
+                      <td className="py-2.5 px-4 font-medium">{adj.productName}</td>
+                      <td className="py-2.5 px-4">
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300">
+                          {adj.adjustmentType}
+                        </span>
+                      </td>
+                      <td
+                        className={`py-2.5 px-4 text-right font-mono font-bold ${
+                          Number(adj.quantityDelta) < 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'
+                        }`}
+                      >
+                        {Number(adj.quantityDelta) > 0 ? `+${Number(adj.quantityDelta)}` : Number(adj.quantityDelta)}
+                      </td>
+                      <td className="py-2.5 px-4 text-right font-mono font-bold">
+                        KES {Number(adj.totalCostKes).toFixed(2)}
+                      </td>
+                      <td className="py-2.5 px-4 text-zinc-600 dark:text-zinc-300 max-w-xs truncate" title={adj.reason}>
+                        {adj.reason}
+                      </td>
+                      <td className="py-2.5 px-4">
+                        {adj.erpnextStatus === 'POSTED' ? (
+                          <span className="px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 font-mono">
+                            {adj.erpnextJournalEntryId || 'POSTED'}
+                          </span>
+                        ) : adj.erpnextStatus === 'QUEUED' ? (
+                          <span
+                            className="px-2 py-0.5 rounded bg-amber-100 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 font-semibold"
+                            title={adj.errorMessage || 'Queued for Outbox retry'}
+                          >
+                            QUEUED (Outbox)
+                          </span>
+                        ) : (
+                          <span className="px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-zinc-500">
+                            {adj.erpnextStatus}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </div>
       </div>
@@ -1186,6 +1350,100 @@ export function ManagerInventoryView() {
                 className="w-full py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl shadow-xs transition"
               >
                 Record Stock Receipt
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Stock Adjustment / Shrinkage Modal */}
+      {showAdjustModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-zinc-900 rounded-3xl shadow-2xl max-w-md w-full max-h-[92vh] overflow-y-auto border border-zinc-200 dark:border-zinc-800">
+            <div className="bg-amber-600 text-white px-6 py-4 flex items-center justify-between sticky top-0 z-30">
+              <h3 className="font-bold text-lg">Record Stock Adjustment / Shrinkage</h3>
+              <button onClick={() => setShowAdjustModal(false)} className="text-2xl leading-none">
+                &times;
+              </button>
+            </div>
+            <form onSubmit={handleRecordAdjustment} className="p-6 space-y-4 text-xs">
+              <div>
+                <label className="block font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
+                  Product
+                </label>
+                <select
+                  required
+                  value={adjProductId}
+                  onChange={(e) => setAdjProductId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800"
+                >
+                  <option value="">-- Select Product --</option>
+                  {products.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name} (Stock: {Number(p.stockQuantity).toFixed(1)}, Cost: KES {(p.costPriceKes ?? 0).toFixed(2)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
+                    Adjustment Type
+                  </label>
+                  <select
+                    value={adjType}
+                    onChange={(e) => setAdjType(e.target.value as StockAdjustmentType)}
+                    className="w-full px-3 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800"
+                  >
+                    <option value="SHRINKAGE">Shrinkage / Loss</option>
+                    <option value="EXPIRED">Expired Write-Off</option>
+                    <option value="DAMAGED">Damaged Goods</option>
+                    <option value="CYCLE_COUNT">Cycle Count (+/-)</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
+                    {adjType === 'CYCLE_COUNT' ? 'Quantity Delta (+/-)' : 'Quantity Removed'}
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    required
+                    value={adjQty}
+                    onChange={(e) => setAdjQty(e.target.value)}
+                    placeholder={adjType === 'CYCLE_COUNT' ? '-2 or +3' : '2'}
+                    className="w-full px-3 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800 font-mono"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block font-semibold text-zinc-600 dark:text-zinc-400 mb-1">
+                  Reason / Audit Note
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={adjReason}
+                  onChange={(e) => setAdjReason(e.target.value)}
+                  placeholder="e.g. Expired dairy lot removed from shelf"
+                  className="w-full px-3 py-2 rounded-xl border border-zinc-300 dark:border-zinc-700 bg-white dark:bg-zinc-800"
+                />
+              </div>
+              <label className="flex items-center gap-2 text-zinc-700 dark:text-zinc-300 cursor-pointer pt-1">
+                <input
+                  type="checkbox"
+                  checked={adjPostErpNext}
+                  onChange={(e) => setAdjPostErpNext(e.target.checked)}
+                  className="rounded border-zinc-300 dark:border-zinc-700"
+                />
+                <span>Post GL Journal Entry to ERPNext (Debit COGS / Credit Inventory; queues if offline)</span>
+              </label>
+              <button
+                type="submit"
+                disabled={adjSubmitting}
+                className="w-full py-3 bg-amber-600 hover:bg-amber-700 text-white font-bold rounded-xl shadow-xs transition disabled:opacity-50"
+              >
+                {adjSubmitting ? 'Recording Adjustment...' : 'Record Stock Adjustment'}
               </button>
             </form>
           </div>

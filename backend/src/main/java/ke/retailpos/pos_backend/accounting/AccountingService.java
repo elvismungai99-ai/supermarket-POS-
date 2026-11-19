@@ -528,7 +528,8 @@ public class AccountingService {
     }
 
     String remark = "POS End-of-Day Summary for Shop " + summary.getShopId() + " (" + summary.getBusinessDate() + ")";
-    return JournalEntryDto.of(config.getCompanyName(), summary.getBusinessDate(), remark, lines);
+    String refKey = "POS-EOD-" + summary.getShopId().toString().substring(0, 8).toUpperCase() + "-" + summary.getBusinessDate();
+    return JournalEntryDto.of(config.getCompanyName(), summary.getBusinessDate(), remark, lines, refKey);
   }
 
   /**

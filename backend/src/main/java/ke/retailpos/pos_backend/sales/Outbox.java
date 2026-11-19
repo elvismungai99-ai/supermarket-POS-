@@ -29,6 +29,18 @@ public class Outbox {
   @Column(name = "sent_at")
   private Instant sentAt;
 
+  @Column(name = "attempt_count", nullable = false)
+  private int attemptCount = 0;
+
+  @Column(name = "next_retry_at")
+  private Instant nextRetryAt;
+
+  @Column(name = "last_error")
+  private String lastError;
+
+  @Column(name = "failed_permanently", nullable = false)
+  private boolean failedPermanently = false;
+
   public Outbox() {}
 
   public Outbox(UUID id, String topic, String payload, Instant createdAt, Instant sentAt) {
@@ -53,4 +65,16 @@ public class Outbox {
 
   public Instant getSentAt() { return sentAt; }
   public void setSentAt(Instant sentAt) { this.sentAt = sentAt; }
+
+  public int getAttemptCount() { return attemptCount; }
+  public void setAttemptCount(int attemptCount) { this.attemptCount = attemptCount; }
+
+  public Instant getNextRetryAt() { return nextRetryAt; }
+  public void setNextRetryAt(Instant nextRetryAt) { this.nextRetryAt = nextRetryAt; }
+
+  public String getLastError() { return lastError; }
+  public void setLastError(String lastError) { this.lastError = lastError; }
+
+  public boolean isFailedPermanently() { return failedPermanently; }
+  public void setFailedPermanently(boolean failedPermanently) { this.failedPermanently = failedPermanently; }
 }
