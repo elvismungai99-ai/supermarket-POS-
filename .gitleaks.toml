@@ -1,0 +1,10 @@
+title = "supermarketPOS Gitleaks configuration"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Ignore harmless example placeholder text in infra/.env.example (commit a9d5f65)"
+regexes = [
+  '''replace-with-(distinct-)?32-plus-char-[a-z-]+''',
+]
