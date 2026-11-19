@@ -205,9 +205,9 @@ public class ErpNextClient {
         log.info("Successfully posted Journal Entry to ERPNext: {}", name);
         return new ErpNextResponse(true, name, null, status);
       } else {
-        String errDetail = response.body();
+        String errDetail = extractErpNextError(status, response.body());
         log.warn("ERPNext API rejected Journal Entry (status {}): {}", status, errDetail);
-        return new ErpNextResponse(false, null, "ERPNext HTTP " + status + ": " + errDetail, status);
+        return new ErpNextResponse(false, null, errDetail, status);
       }
     } catch (Exception e) {
       String detail = describeException(e, cleanBaseUrl);
@@ -358,22 +358,31 @@ public class ErpNextClient {
         }
       }
 
+      // Ensure Supplier exists in ERPNext (auto-create if new) so LinkValidationError never blocks GRN sync
+      String resolvedSupplier = ensureSupplierExists(cleanBaseUrl, apiKey, apiSecret, invoice.supplierName());
+
       Map<String, Object> itemRow = new LinkedHashMap<>();
       itemRow.put("item_name", invoice.itemName());
+      itemRow.put("description", invoice.itemName());
       itemRow.put("qty", invoice.qty());
+      itemRow.put("uom", "Nos");
+      itemRow.put("stock_uom", "Nos");
+      itemRow.put("conversion_factor", 1.0);
       itemRow.put("rate", invoice.rate());
       itemRow.put("expense_account", invoice.expenseOrInventoryAccount());
       itemRow.put("cost_center", invoice.costCenter());
 
       Map<String, Object> payload = new LinkedHashMap<>();
       payload.put("doctype", "Purchase Invoice");
-      payload.put("supplier", invoice.supplierName());
+      payload.put("supplier", resolvedSupplier);
       if (invoice.supplierInvoiceNo() != null && !invoice.supplierInvoiceNo().isBlank()) {
         payload.put("bill_no", invoice.supplierInvoiceNo().trim());
+        payload.put("bill_date", invoice.postingDate());
       }
       payload.put("posting_date", invoice.postingDate());
       payload.put("company", invoice.company());
       payload.put("credit_to", invoice.payableAccount());
+      payload.put("update_stock", 0);
       payload.put("docstatus", invoice.submitOnPost() ? 1 : 0);
       payload.put("items", List.of(itemRow));
 
@@ -384,6 +393,9 @@ public class ErpNextClient {
         taxRow.put("account_head", invoice.inputVatAccount());
         taxRow.put("rate", pct);
         taxRow.put("description", "Input VAT " + pct + "%");
+        if (invoice.costCenter() != null && !invoice.costCenter().isBlank()) {
+          taxRow.put("cost_center", invoice.costCenter());
+        }
         payload.put("taxes", List.of(taxRow));
       }
 
@@ -406,11 +418,169 @@ public class ErpNextClient {
         String name = root.path("data").path("name").asText();
         return new ErpNextResponse(true, name, null, status);
       } else {
-        return new ErpNextResponse(false, null, "ERPNext HTTP " + status + ": " + response.body(), status);
+        return new ErpNextResponse(false, null, extractErpNextError(status, response.body()), status);
       }
     } catch (Exception e) {
       return new ErpNextResponse(false, null, "Failed to post Purchase Invoice to ERPNext: " + describeException(e, cleanBaseUrl), 503);
     }
+  }
+
+  /**
+   * Resolves an ERPNext Supplier by name (case-insensitive in MariaDB/Frappe) or creates it
+   * automatically under "All Supplier Groups" so GRN Purchase Invoice posting never fails on new suppliers.
+   */
+  private String ensureSupplierExists(
+      String cleanBaseUrl,
+      String apiKey,
+      String apiSecret,
+      String supplierName
+  ) {
+    if (supplierName == null || supplierName.isBlank()) {
+      return supplierName;
+    }
+    String trimmed = supplierName.trim();
+    try {
+      String sanitized = trimmed.replace("\"", "");
+      String encodedFilters = java.net.URLEncoder.encode(
+          "[[\"supplier_name\",\"=\",\"" + sanitized + "\"]]",
+          java.nio.charset.StandardCharsets.UTF_8
+      );
+      String encodedFields = java.net.URLEncoder.encode("[\"name\"]", java.nio.charset.StandardCharsets.UTF_8);
+      String lookupUrl = cleanBaseUrl + "/api/resource/Supplier?filters=" + encodedFilters
+          + "&fields=" + encodedFields + "&limit_page_length=1";
+
+      HttpRequest.Builder lookupReq = HttpRequest.newBuilder()
+          .uri(URI.create(lookupUrl))
+          .header("Accept", "application/json")
+          .timeout(Duration.ofSeconds(10))
+          .GET();
+      if (apiKey != null && !apiKey.isBlank() && apiSecret != null && !apiSecret.isBlank()) {
+        lookupReq.header("Authorization", "token " + apiKey.trim() + ":" + apiSecret.trim());
+      }
+
+      HttpResponse<String> lookupResp = httpClient.send(lookupReq.build(), HttpResponse.BodyHandlers.ofString());
+      if (lookupResp.statusCode() >= 200 && lookupResp.statusCode() < 300) {
+        JsonNode data = objectMapper.readTree(lookupResp.body()).path("data");
+        if (data.isArray() && !data.isEmpty()) {
+          String existingName = data.get(0).path("name").asText("");
+          if (!existingName.isBlank()) {
+            return existingName;
+          }
+        }
+      }
+
+      // Supplier not found -> create it automatically under a leaf Supplier Group (e.g. "Local")
+      String supplierGroup = resolveLeafSupplierGroup(cleanBaseUrl, apiKey, apiSecret);
+      Map<String, Object> supplierPayload = new LinkedHashMap<>();
+      supplierPayload.put("doctype", "Supplier");
+      supplierPayload.put("supplier_name", trimmed);
+      supplierPayload.put("supplier_group", supplierGroup);
+      supplierPayload.put("supplier_type", "Company");
+
+      HttpRequest.Builder createReq = HttpRequest.newBuilder()
+          .uri(URI.create(cleanBaseUrl + "/api/resource/Supplier"))
+          .header("Content-Type", "application/json")
+          .header("Accept", "application/json")
+          .timeout(Duration.ofSeconds(12))
+          .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(supplierPayload)));
+      if (apiKey != null && !apiKey.isBlank() && apiSecret != null && !apiSecret.isBlank()) {
+        createReq.header("Authorization", "token " + apiKey.trim() + ":" + apiSecret.trim());
+      }
+
+      HttpResponse<String> createResp = httpClient.send(createReq.build(), HttpResponse.BodyHandlers.ofString());
+      if (createResp.statusCode() >= 200 && createResp.statusCode() < 300) {
+        String createdName = objectMapper.readTree(createResp.body()).path("data").path("name").asText("");
+        if (!createdName.isBlank()) {
+          log.info("Auto-created missing ERPNext Supplier: {}", createdName);
+          return createdName;
+        }
+      } else {
+        log.warn("Could not auto-create ERPNext Supplier '{}' (HTTP {}): {}",
+            trimmed, createResp.statusCode(), extractErpNextError(createResp.statusCode(), createResp.body()));
+      }
+    } catch (Exception e) {
+      log.warn("Supplier lookup/create fallback for '{}': {}", trimmed, e.getMessage());
+    }
+    return trimmed;
+  }
+
+  private String resolveLeafSupplierGroup(String cleanBaseUrl, String apiKey, String apiSecret) {
+    try {
+      String encodedFilters = java.net.URLEncoder.encode(
+          "[[\"is_group\",\"=\",0]]",
+          java.nio.charset.StandardCharsets.UTF_8
+      );
+      String encodedFields = java.net.URLEncoder.encode("[\"name\"]", java.nio.charset.StandardCharsets.UTF_8);
+      String url = cleanBaseUrl + "/api/resource/Supplier%20Group?filters=" + encodedFilters
+          + "&fields=" + encodedFields + "&limit_page_length=20";
+
+      HttpRequest.Builder req = HttpRequest.newBuilder()
+          .uri(URI.create(url))
+          .header("Accept", "application/json")
+          .timeout(Duration.ofSeconds(8))
+          .GET();
+      if (apiKey != null && !apiKey.isBlank() && apiSecret != null && !apiSecret.isBlank()) {
+        req.header("Authorization", "token " + apiKey.trim() + ":" + apiSecret.trim());
+      }
+      HttpResponse<String> resp = httpClient.send(req.build(), HttpResponse.BodyHandlers.ofString());
+      if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
+        JsonNode data = objectMapper.readTree(resp.body()).path("data");
+        String firstLeaf = null;
+        if (data.isArray()) {
+          for (JsonNode item : data) {
+            String name = item.path("name").asText("");
+            if ("Local".equalsIgnoreCase(name) || "Distributor".equalsIgnoreCase(name)) {
+              return name;
+            }
+            if (firstLeaf == null && !name.isBlank()) {
+              firstLeaf = name;
+            }
+          }
+        }
+        if (firstLeaf != null) {
+          return firstLeaf;
+        }
+      }
+    } catch (Exception ignored) {
+      // Fallback to standard ERPNext leaf group
+    }
+    return "Local";
+  }
+
+  public String extractErpNextError(int status, String body) {
+    if (body == null || body.isBlank()) {
+      return "ERPNext HTTP " + status;
+    }
+    try {
+      JsonNode root = objectMapper.readTree(body);
+      String serverMsgs = root.path("_server_messages").asText("");
+      if (!serverMsgs.isBlank()) {
+        JsonNode arr = objectMapper.readTree(serverMsgs);
+        if (arr.isArray() && !arr.isEmpty()) {
+          List<String> cleanMsgs = new ArrayList<>();
+          for (JsonNode entry : arr) {
+            String raw = entry.asText("");
+            try {
+              String m = objectMapper.readTree(raw).path("message").asText(raw);
+              cleanMsgs.add(m.replaceAll("<[^>]+>", "").trim());
+            } catch (Exception ignored) {
+              cleanMsgs.add(raw);
+            }
+          }
+          if (!cleanMsgs.isEmpty()) {
+            return "ERPNext HTTP " + status + ": " + String.join("; ", cleanMsgs);
+          }
+        }
+      }
+      String exc = root.path("exception").asText("");
+      if (!exc.isBlank()) {
+        return "ERPNext HTTP " + status + ": " + exc;
+      }
+    } catch (Exception ignored) {
+      // Fall back to truncated raw response
+    }
+    String snippet = body.length() > 300 ? body.substring(0, 300) + "..." : body;
+    return "ERPNext HTTP " + status + ": " + snippet;
   }
 
   private Optional<String> findExistingByField(

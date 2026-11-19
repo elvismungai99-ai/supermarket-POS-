@@ -24,7 +24,7 @@ Create a dedicated integration user in ERPNext (for example, `pos-integration@yo
    - **`Journal Entry`**: `Read`, `Create`, `Submit` (optional `Write` for drafts)
    - **`Purchase Invoice`**: `Read`, `Create`, `Submit`
    - **`Account`**: `Read` (required for Chart of Accounts validation / connection check)
-   - **`Supplier`**: `Read` (if matching existing supplier names on GRN)
+   - **`Supplier`**: `Read`, `Create` (allows auto-creating new GRN suppliers in ERPNext on first delivery)
 2. Assign **`POS GL Integration`** to the dedicated API user.
 3. Open **User → API Access → Generate Keys** to generate `API Key` and `API Secret`.
 4. Configure the credentials in the POS **Super Admin → Accounting & ERPNext** tab (the backend encrypts `erpnext_api_secret` at rest with AES-256-GCM before storing it in `accounting_config`).
