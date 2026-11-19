@@ -53,8 +53,10 @@ public class AccountingController {
   }
 
   @PostMapping("/verify-accounts")
-  public ResponseEntity<ErpNextClient.AccountVerificationResult> verifyAccounts() {
-    return ResponseEntity.ok(accountingService.verifyErpNextAccounts());
+  public ResponseEntity<ErpNextClient.AccountVerificationResult> verifyAccounts(
+      @RequestBody(required = false) AccountingConfig override
+  ) {
+    return ResponseEntity.ok(accountingService.verifyErpNextAccounts(override));
   }
 
   @GetMapping("/export/csv")
@@ -85,8 +87,10 @@ public class AccountingController {
   }
 
   @PostMapping("/test-connection")
-  public ResponseEntity<ErpNextClient.ConnectionTestResult> testConnection() {
-    return ResponseEntity.ok(accountingService.testErpNextConnection());
+  public ResponseEntity<ErpNextClient.ConnectionTestResult> testConnection(
+      @RequestBody(required = false) AccountingService.TestConnectionRequest override
+  ) {
+    return ResponseEntity.ok(accountingService.testErpNextConnection(override));
   }
 
   @GetMapping("/history")

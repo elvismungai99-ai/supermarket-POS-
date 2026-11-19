@@ -80,7 +80,7 @@ class OutboxProcessorTest {
 
     when(outboxRepository.findDuePending(any())).thenReturn(List.of(item));
     when(accountingService.postToErpNext(eq(shopId), any())).thenReturn(
-        new AccountingService.PostResult(false, null, "FAILED", "Connection refused")
+        new AccountingService.PostResult(false, "FAILED", null, "Connection refused")
     );
 
     int processed = outboxProcessor.processPendingOutbox();

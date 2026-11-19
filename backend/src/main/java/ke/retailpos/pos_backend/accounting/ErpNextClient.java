@@ -22,9 +22,37 @@ public class ErpNextClient {
 
   public ErpNextClient(ObjectMapper objectMapper) {
     this.httpClient = HttpClient.newBuilder()
-        .connectTimeout(Duration.ofSeconds(5))
+        .connectTimeout(Duration.ofSeconds(10))
+        .followRedirects(HttpClient.Redirect.NORMAL)
         .build();
     this.objectMapper = objectMapper;
+  }
+
+  /**
+   * Normalizes user-entered ERPNext base URLs (e.g. strips /app/..., trailing slashes,
+   * and prepends https:// for cloud domains or http:// for localhost).
+   */
+  public static String normalizeBaseUrl(String rawUrl) {
+    if (rawUrl == null) return "";
+    String s = rawUrl.trim();
+    if (s.isBlank()) return "";
+
+    if (!s.matches("(?i)^https?://.*")) {
+      boolean local = s.startsWith("localhost") || s.startsWith("127.") || s.startsWith("10.") || s.startsWith("192.168.");
+      s = (local ? "http://" : "https://") + s;
+    }
+
+    int hashIdx = s.indexOf('#');
+    if (hashIdx >= 0) s = s.substring(0, hashIdx);
+    int queryIdx = s.indexOf('?');
+    if (queryIdx >= 0) s = s.substring(0, queryIdx);
+
+    // Strip accidental Frappe UI or API paths copied from browser address bar
+    s = s.replaceFirst("(?i)/(app|desk|api)(/.*)?$", "");
+    while (s.endsWith("/")) {
+      s = s.substring(0, s.length() - 1);
+    }
+    return s;
   }
 
   public record ErpNextResponse(
@@ -105,7 +133,10 @@ public class ErpNextClient {
       return new ErpNextResponse(false, null, "ERPNext base URL is not configured", 400);
     }
 
-    String cleanBaseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+    String cleanBaseUrl = normalizeBaseUrl(baseUrl);
+    if (cleanBaseUrl.isBlank()) {
+      return new ErpNextResponse(false, null, "ERPNext base URL is not configured", 400);
+    }
     String url = cleanBaseUrl + "/api/resource/Journal%20Entry";
 
     try {
@@ -155,7 +186,7 @@ public class ErpNextClient {
           .uri(URI.create(url))
           .header("Content-Type", "application/json")
           .header("Accept", "application/json")
-          .timeout(Duration.ofSeconds(10))
+          .timeout(Duration.ofSeconds(20))
           .POST(HttpRequest.BodyPublishers.ofString(requestJson));
 
       if (apiKey != null && !apiKey.isBlank() && apiSecret != null && !apiSecret.isBlank()) {
@@ -189,18 +220,18 @@ public class ErpNextClient {
    * Tests connection to ERPNext server using current credentials.
    */
   public ConnectionTestResult testConnection(String baseUrl, String apiKey, String apiSecret) {
-    if (baseUrl == null || baseUrl.isBlank()) {
+    String cleanBaseUrl = normalizeBaseUrl(baseUrl);
+    if (cleanBaseUrl.isBlank()) {
       return new ConnectionTestResult(false, "ERPNext Base URL must be provided", 400);
     }
 
-    String cleanBaseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
     String url = cleanBaseUrl + "/api/method/frappe.auth.get_logged_user";
 
     try {
       HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
           .uri(URI.create(url))
           .header("Accept", "application/json")
-          .timeout(Duration.ofSeconds(5))
+          .timeout(Duration.ofSeconds(12))
           .GET();
 
       if (apiKey != null && !apiKey.isBlank() && apiSecret != null && !apiSecret.isBlank()) {
@@ -211,7 +242,13 @@ public class ErpNextClient {
       if (response.statusCode() == 200) {
         JsonNode root = objectMapper.readTree(response.body());
         String user = root.path("message").asText("Connected User");
-        return new ConnectionTestResult(true, "Connected to ERPNext as: " + user, 200);
+        return new ConnectionTestResult(true, "Connected to ERPNext (" + cleanBaseUrl + ") as: " + user, 200);
+      } else if (response.statusCode() == 401 || response.statusCode() == 403) {
+        return new ConnectionTestResult(
+            false,
+            "Authentication rejected by ERPNext (HTTP " + response.statusCode() + "). Verify API Key & API Secret belong to " + cleanBaseUrl,
+            response.statusCode()
+        );
       } else {
         return new ConnectionTestResult(false, "ERPNext responded with HTTP " + response.statusCode() + ": " + response.body(), response.statusCode());
       }
@@ -234,7 +271,10 @@ public class ErpNextClient {
       return new AccountVerificationResult(false, List.of(), requiredAccounts, "ERPNext Base URL must be provided");
     }
 
-    String cleanBaseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+    String cleanBaseUrl = normalizeBaseUrl(baseUrl);
+    if (cleanBaseUrl.isBlank()) {
+      return new AccountVerificationResult(false, List.of(), requiredAccounts, "ERPNext Base URL must be provided");
+    }
     String encodedFilters = java.net.URLEncoder.encode(
         "[[\"company\",\"=\",\"" + companyName.replace("\"", "") + "\"]]",
         java.nio.charset.StandardCharsets.UTF_8
@@ -246,7 +286,7 @@ public class ErpNextClient {
       HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
           .uri(URI.create(url))
           .header("Accept", "application/json")
-          .timeout(Duration.ofSeconds(8))
+          .timeout(Duration.ofSeconds(15))
           .GET();
       if (apiKey != null && !apiKey.isBlank() && apiSecret != null && !apiSecret.isBlank()) {
         reqBuilder.header("Authorization", "token " + apiKey.trim() + ":" + apiSecret.trim());
@@ -299,7 +339,10 @@ public class ErpNextClient {
     if (baseUrl == null || baseUrl.isBlank()) {
       return new ErpNextResponse(false, null, "ERPNext base URL is not configured", 400);
     }
-    String cleanBaseUrl = baseUrl.endsWith("/") ? baseUrl.substring(0, baseUrl.length() - 1) : baseUrl;
+    String cleanBaseUrl = normalizeBaseUrl(baseUrl);
+    if (cleanBaseUrl.isBlank()) {
+      return new ErpNextResponse(false, null, "ERPNext base URL is not configured", 400);
+    }
     String url = cleanBaseUrl + "/api/resource/Purchase%20Invoice";
 
     try {
@@ -349,7 +392,7 @@ public class ErpNextClient {
           .uri(URI.create(url))
           .header("Content-Type", "application/json")
           .header("Accept", "application/json")
-          .timeout(Duration.ofSeconds(10))
+          .timeout(Duration.ofSeconds(20))
           .POST(HttpRequest.BodyPublishers.ofString(requestJson));
 
       if (apiKey != null && !apiKey.isBlank() && apiSecret != null && !apiSecret.isBlank()) {
@@ -414,12 +457,25 @@ public class ErpNextClient {
   }
 
   private static String describeException(Exception e, String cleanBaseUrl) {
-    if (e instanceof java.net.ConnectException || e.getCause() instanceof java.net.ConnectException) {
+    Throwable cause = e.getCause() != null ? e.getCause() : e;
+    if (e instanceof java.net.ConnectException || cause instanceof java.net.ConnectException) {
       return "Connection refused — ensure ERPNext is running at " + cleanBaseUrl;
+    }
+    if (e instanceof java.net.UnknownHostException || cause instanceof java.net.UnknownHostException) {
+      return "DNS lookup failed — check the ERPNext domain spelling (" + cleanBaseUrl + ") and internet connectivity";
+    }
+    if (e instanceof java.net.http.HttpTimeoutException || cause instanceof java.net.http.HttpTimeoutException) {
+      return "Request timed out contacting " + cleanBaseUrl + " — check server availability or firewall";
+    }
+    if (e instanceof javax.net.ssl.SSLException || cause instanceof javax.net.ssl.SSLException) {
+      return "SSL/TLS certificate error connecting to " + cleanBaseUrl + ": " + cause.getMessage();
+    }
+    if (e instanceof IllegalArgumentException) {
+      return "Invalid ERPNext Base URL (" + cleanBaseUrl + "): " + e.getMessage();
     }
     if (e.getMessage() != null && !e.getMessage().isBlank()) {
       return e.getMessage();
     }
-    return e.getClass().getSimpleName() + " contacting " + cleanBaseUrl;
+    return cause.getClass().getSimpleName() + " contacting " + cleanBaseUrl;
   }
 }

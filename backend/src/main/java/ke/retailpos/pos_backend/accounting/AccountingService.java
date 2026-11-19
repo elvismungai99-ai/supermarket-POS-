@@ -653,7 +653,9 @@ public class AccountingService {
   public AccountingConfig updateAccountingConfig(AccountingConfig updated) {
     AccountingConfig current = getAccountingConfig();
     if (updated.getCompanyName() != null) current.setCompanyName(updated.getCompanyName().trim());
-    if (updated.getErpnextBaseUrl() != null) current.setErpnextBaseUrl(updated.getErpnextBaseUrl().trim());
+    if (updated.getErpnextBaseUrl() != null) {
+      current.setErpnextBaseUrl(ErpNextClient.normalizeBaseUrl(updated.getErpnextBaseUrl()));
+    }
     if (updated.getErpnextApiKey() != null) current.setErpnextApiKey(updated.getErpnextApiKey().trim());
     if (updated.getErpnextApiSecret() != null && !SecretEncryptionService.isMasked(updated.getErpnextApiSecret())) {
       String rawSecret = updated.getErpnextApiSecret().trim();
@@ -737,37 +739,76 @@ public class AccountingService {
     return copy;
   }
 
+  public record TestConnectionRequest(
+      String erpnextBaseUrl,
+      String erpnextApiKey,
+      String erpnextApiSecret
+  ) {}
+
   public ErpNextClient.ConnectionTestResult testErpNextConnection() {
+    return testErpNextConnection(null);
+  }
+
+  public ErpNextClient.ConnectionTestResult testErpNextConnection(TestConnectionRequest override) {
     AccountingConfig cfg = getAccountingConfig();
-    return erpNextClient.testConnection(cfg.getErpnextBaseUrl(), cfg.getErpnextApiKey(), getDecryptedApiSecret(cfg));
+    String baseUrl = (override != null && override.erpnextBaseUrl() != null && !override.erpnextBaseUrl().isBlank())
+        ? override.erpnextBaseUrl()
+        : cfg.getErpnextBaseUrl();
+    String apiKey = (override != null && override.erpnextApiKey() != null && !override.erpnextApiKey().isBlank())
+        ? override.erpnextApiKey()
+        : cfg.getErpnextApiKey();
+    String apiSecret = (override != null && override.erpnextApiSecret() != null
+        && !override.erpnextApiSecret().isBlank()
+        && !SecretEncryptionService.isMasked(override.erpnextApiSecret()))
+        ? override.erpnextApiSecret().trim()
+        : getDecryptedApiSecret(cfg);
+    return erpNextClient.testConnection(baseUrl, apiKey, apiSecret);
   }
 
   public ErpNextClient.AccountVerificationResult verifyErpNextAccounts() {
+    return verifyErpNextAccounts(null);
+  }
+
+  public ErpNextClient.AccountVerificationResult verifyErpNextAccounts(AccountingConfig override) {
     AccountingConfig cfg = getAccountingConfig();
+    AccountingConfig eff = override != null ? override : cfg;
+    String baseUrl = (eff.getErpnextBaseUrl() != null && !eff.getErpnextBaseUrl().isBlank())
+        ? eff.getErpnextBaseUrl()
+        : cfg.getErpnextBaseUrl();
+    String apiKey = (eff.getErpnextApiKey() != null && !eff.getErpnextApiKey().isBlank())
+        ? eff.getErpnextApiKey()
+        : cfg.getErpnextApiKey();
+    String apiSecret = (override != null && override.getErpnextApiSecret() != null
+        && !override.getErpnextApiSecret().isBlank()
+        && !SecretEncryptionService.isMasked(override.getErpnextApiSecret()))
+        ? override.getErpnextApiSecret().trim()
+        : getDecryptedApiSecret(cfg);
+    String company = (eff.getCompanyName() != null && !eff.getCompanyName().isBlank())
+        ? eff.getCompanyName()
+        : cfg.getCompanyName();
+
     List<String> required = List.of(
-        cfg.getAccountCashOnHand(),
-        cfg.getAccountMpesaClearing(),
-        cfg.getAccountBankClearing(),
-        cfg.getAccountSalesStandard(),
-        cfg.getAccountSalesSpecial(),
-        cfg.getAccountSalesZeroRated(),
-        cfg.getAccountSalesExempt(),
-        cfg.getAccountOutputVat(),
-        cfg.getAccountSalesReturns(),
-        cfg.getAccountCashOverShort(),
-        cfg.getAccountCogs(),
-        cfg.getAccountInventory(),
-        cfg.getAccountLoyaltyDiscount(),
-        cfg.getAccountInputVat(),
-        cfg.getAccountAccountsPayable()
+        firstNonBlank(eff.getAccountCashOnHand(), cfg.getAccountCashOnHand()),
+        firstNonBlank(eff.getAccountMpesaClearing(), cfg.getAccountMpesaClearing()),
+        firstNonBlank(eff.getAccountBankClearing(), cfg.getAccountBankClearing()),
+        firstNonBlank(eff.getAccountSalesStandard(), cfg.getAccountSalesStandard()),
+        firstNonBlank(eff.getAccountSalesSpecial(), cfg.getAccountSalesSpecial()),
+        firstNonBlank(eff.getAccountSalesZeroRated(), cfg.getAccountSalesZeroRated()),
+        firstNonBlank(eff.getAccountSalesExempt(), cfg.getAccountSalesExempt()),
+        firstNonBlank(eff.getAccountOutputVat(), cfg.getAccountOutputVat()),
+        firstNonBlank(eff.getAccountSalesReturns(), cfg.getAccountSalesReturns()),
+        firstNonBlank(eff.getAccountCashOverShort(), cfg.getAccountCashOverShort()),
+        firstNonBlank(eff.getAccountCogs(), cfg.getAccountCogs()),
+        firstNonBlank(eff.getAccountInventory(), cfg.getAccountInventory()),
+        firstNonBlank(eff.getAccountLoyaltyDiscount(), cfg.getAccountLoyaltyDiscount()),
+        firstNonBlank(eff.getAccountInputVat(), cfg.getAccountInputVat()),
+        firstNonBlank(eff.getAccountAccountsPayable(), cfg.getAccountAccountsPayable())
     );
-    return erpNextClient.verifyCompanyAccounts(
-        cfg.getErpnextBaseUrl(),
-        cfg.getErpnextApiKey(),
-        getDecryptedApiSecret(cfg),
-        cfg.getCompanyName(),
-        required
-    );
+    return erpNextClient.verifyCompanyAccounts(baseUrl, apiKey, apiSecret, company, required);
+  }
+
+  private static String firstNonBlank(String candidate, String fallback) {
+    return (candidate != null && !candidate.isBlank()) ? candidate.trim() : fallback;
   }
 
   /**

@@ -94,7 +94,9 @@ export function AccountingErpNextView() {
   const [actionLoading, setActionLoading] = useState(false);
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [testResult, setTestResult] = useState<{ connected: boolean; message: string } | null>(null);
+  const [testingConnection, setTestingConnection] = useState(false);
   const [verifyResult, setVerifyResult] = useState<{ reachable: boolean; missingAccounts: string[]; message: string } | null>(null);
+  const [verifyingAccounts, setVerifyingAccounts] = useState(false);
   const [alertMsg, setAlertMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   // Load summary for selected date
@@ -175,22 +177,42 @@ export function AccountingErpNextView() {
     }
   };
 
-  // Handle test connection
+  // Handle test connection (tests current modal form values even before Save)
   const handleTestConnection = async () => {
     setTestResult(null);
+    setTestingConnection(true);
     try {
-      const res = await apiFetch('/api/accounting/test-connection', { method: 'POST' });
+      const res = await apiFetch('/api/accounting/test-connection', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          config
+            ? {
+                erpnextBaseUrl: config.erpnextBaseUrl,
+                erpnextApiKey: config.erpnextApiKey,
+                erpnextApiSecret: config.erpnextApiSecret,
+              }
+            : {}
+        ),
+      });
       const json = await res.json();
       setTestResult(json);
     } catch (err: unknown) {
       setTestResult({ connected: false, message: err instanceof Error ? err.message : 'Connection ping failed' });
+    } finally {
+      setTestingConnection(false);
     }
   };
 
   const handleVerifyAccounts = async () => {
     setVerifyResult(null);
+    setVerifyingAccounts(true);
     try {
-      const res = await apiFetch('/api/accounting/verify-accounts', { method: 'POST' });
+      const res = await apiFetch('/api/accounting/verify-accounts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config ?? {}),
+      });
       const json = await res.json();
       setVerifyResult(json);
     } catch (err: unknown) {
@@ -199,6 +221,8 @@ export function AccountingErpNextView() {
         missingAccounts: [],
         message: err instanceof Error ? err.message : 'COA verification failed',
       });
+    } finally {
+      setVerifyingAccounts(false);
     }
   };
 
@@ -612,10 +636,13 @@ export function AccountingErpNextView() {
                       type="text"
                       value={config.erpnextBaseUrl}
                       onChange={(e) => setConfig({ ...config, erpnextBaseUrl: e.target.value })}
-                      placeholder="http://localhost:8000"
+                      placeholder="https://your-site.frappe.cloud"
                       className="w-full mt-1 p-2 bg-white dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded-lg text-xs"
                       required
                     />
+                    <p className="text-[10px] text-zinc-400 mt-1">
+                      Cloud: https://your-site.frappe.cloud · Local bench: http://localhost:8000
+                    </p>
                   </div>
 
                   <div>
@@ -643,17 +670,19 @@ export function AccountingErpNextView() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
+                      disabled={testingConnection}
                       onClick={handleTestConnection}
-                      className="px-3 py-1.5 bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 text-xs font-bold rounded-lg transition"
+                      className="px-3 py-1.5 bg-zinc-200 dark:bg-zinc-700 hover:bg-zinc-300 dark:hover:bg-zinc-600 text-xs font-bold rounded-lg transition disabled:opacity-50"
                     >
-                      🔌 Test ERPNext Connection
+                      {testingConnection ? '⏳ Testing...' : '🔌 Test ERPNext Connection'}
                     </button>
                     <button
                       type="button"
+                      disabled={verifyingAccounts}
                       onClick={handleVerifyAccounts}
-                      className="px-3 py-1.5 bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200 hover:bg-blue-200 text-xs font-bold rounded-lg transition"
+                      className="px-3 py-1.5 bg-blue-100 dark:bg-blue-900/50 text-blue-800 dark:text-blue-200 hover:bg-blue-200 text-xs font-bold rounded-lg transition disabled:opacity-50"
                     >
-                      ✓ Verify COA in ERPNext
+                      {verifyingAccounts ? '⏳ Verifying...' : '✓ Verify COA in ERPNext'}
                     </button>
                   </div>
 
