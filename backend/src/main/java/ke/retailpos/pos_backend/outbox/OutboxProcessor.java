@@ -118,11 +118,11 @@ public class OutboxProcessor {
           LocalDate businessDate = LocalDate.parse(json.get("businessDate").asText());
 
           var res = accountingService.postToErpNext(shopId, businessDate);
-          if (res.success()) {
+          if (res.success() || "NO_TRANSACTIONS".equals(res.status())) {
             markSent(item);
             processed++;
-            log.info("Queued ERPNext journal entry processed for shop {} date {} -> Ref: {}",
-                shopId, businessDate, res.erpnextJournalEntryId());
+            log.info("Queued ERPNext journal entry processed for shop {} date {} -> Status: {}, Ref: {}",
+                shopId, businessDate, res.status(), res.erpnextJournalEntryId());
           } else {
             scheduleBackoff(item, res.message());
           }

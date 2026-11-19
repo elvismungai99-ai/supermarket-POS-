@@ -146,7 +146,7 @@ export function AccountingErpNextView() {
       const result = await res.json();
       if (result.success) {
         setAlertMsg({ type: 'success', text: result.message || 'Successfully posted to ERPNext!' });
-      } else if (result.status === 'QUEUED') {
+      } else if (result.status === 'QUEUED' || result.status === 'NO_TRANSACTIONS') {
         setAlertMsg({ type: 'info', text: result.message || 'Queued in Outbox for sync when ERPNext is reachable.' });
       } else {
         setAlertMsg({ type: 'error', text: result.message || 'Posting failed.' });

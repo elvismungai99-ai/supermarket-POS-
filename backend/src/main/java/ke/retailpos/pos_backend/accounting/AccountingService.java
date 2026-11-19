@@ -562,6 +562,24 @@ public class AccountingService {
       );
     }
 
+    // Guard: Do not send empty (KES 0.00) Journal Entries to ERPNext or queue them in Outbox
+    if (journalEntry.accounts().isEmpty()
+        || (journalEntry.totalDebit().compareTo(BigDecimal.ZERO) == 0
+            && journalEntry.totalCredit().compareTo(BigDecimal.ZERO) == 0)) {
+      if (!"POSTED".equalsIgnoreCase(summary.getStatus())) {
+        summary.setStatus("DRAFT");
+        summary.setErrorMessage(null);
+        summaryRepository.save(summary);
+      }
+      log.info("Skipping ERPNext journal post for shop {} date {}: no transactions recorded", shopId, businessDate);
+      return new PostResult(
+          false,
+          "NO_TRANSACTIONS",
+          null,
+          "No transactions recorded for " + businessDate + " — nothing to post to ERPNext."
+      );
+    }
+
     AccountingConfig config = getAccountingConfig();
     AccountingConfig effectiveConfig = copyWithDecryptedSecret(config);
     ErpNextClient.ErpNextResponse erpResponse = accountingExporter.postToErpNext(summary, journalEntry, effectiveConfig);

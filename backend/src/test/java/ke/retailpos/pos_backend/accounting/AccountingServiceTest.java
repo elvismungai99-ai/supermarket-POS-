@@ -222,7 +222,14 @@ class AccountingServiceTest {
     UUID shopId = UUID.randomUUID();
     LocalDate date = LocalDate.of(2026, 11, 12);
 
-    when(saleRepository.findByShopIdAndCreatedAtBetween(any(), any(), any())).thenReturn(List.of());
+    Sale sale = new Sale(UUID.randomUUID(), shopId, UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("116.00"), "COMPLETED", Instant.now());
+    Product prod = new Product(UUID.randomUUID(), "Milk", new BigDecimal("116.00"), "A", true, new BigDecimal("50"), new BigDecimal("10"), new BigDecimal("80.00"));
+    SaleLine line = new SaleLine(UUID.randomUUID(), sale, prod, BigDecimal.ONE, new BigDecimal("116.00"), "A", new BigDecimal("16.00"), new BigDecimal("116.00"), new BigDecimal("80.00"));
+    Payment pay = new Payment(UUID.randomUUID(), sale.getId(), "CASH", new BigDecimal("116.00"), "CASH", "PAID");
+
+    when(saleRepository.findByShopIdAndCreatedAtBetween(any(), any(), any())).thenReturn(List.of(sale));
+    when(saleLineRepository.findBySaleIn(any())).thenReturn(List.of(line));
+    when(paymentRepository.findBySaleIdIn(any())).thenReturn(List.of(pay));
     when(returnRepository.findByCreatedAtBetween(any(), any())).thenReturn(List.of());
     when(shiftRepository.findByClosedAtBetween(any(), any())).thenReturn(List.of());
 
@@ -239,6 +246,26 @@ class AccountingServiceTest {
 
     // Verify outbox entry saved
     verify(outboxRepository).save(any(Outbox.class));
+  }
+
+  @Test
+  void testZeroSalesDaySkipsErpNextPostAndDoesNotQueue() {
+    UUID shopId = UUID.randomUUID();
+    LocalDate date = LocalDate.of(2026, 11, 19);
+
+    when(saleRepository.findByShopIdAndCreatedAtBetween(any(), any(), any())).thenReturn(List.of());
+    when(returnRepository.findByCreatedAtBetween(any(), any())).thenReturn(List.of());
+    when(shiftRepository.findByClosedAtBetween(any(), any())).thenReturn(List.of());
+
+    AccountingService.PostResult result = accountingService.postToErpNext(shopId, date);
+
+    assertFalse(result.success());
+    assertEquals("NO_TRANSACTIONS", result.status());
+    assertNull(result.erpnextJournalEntryId());
+    assertTrue(result.message().contains("No transactions recorded for 2026-11-19"));
+
+    verify(accountingExporter, never()).postToErpNext(any(), any(), any());
+    verify(outboxRepository, never()).save(any(Outbox.class));
   }
 
   @Test
@@ -382,7 +409,14 @@ class AccountingServiceTest {
 
     testConfig.setAutoPostOnEod(true);
     testConfig.setSubmitOnPost(true);
-    when(saleRepository.findByShopIdAndCreatedAtBetween(any(), any(), any())).thenReturn(List.of());
+    Sale eodSale = new Sale(UUID.randomUUID(), AccountingController.DEFAULT_SHOP_ID, UUID.randomUUID(), UUID.randomUUID(), new BigDecimal("200.00"), "COMPLETED", Instant.now());
+    Product prod = new Product(UUID.randomUUID(), "Bread", new BigDecimal("200.00"), "B", true, new BigDecimal("50"), new BigDecimal("10"), new BigDecimal("150.00"));
+    SaleLine eodLine = new SaleLine(UUID.randomUUID(), eodSale, prod, BigDecimal.ONE, new BigDecimal("200.00"), "B", BigDecimal.ZERO, new BigDecimal("200.00"), new BigDecimal("150.00"));
+    Payment eodPay = new Payment(UUID.randomUUID(), eodSale.getId(), "CASH", new BigDecimal("200.00"), "CASH", "PAID");
+
+    when(saleRepository.findByShopIdAndCreatedAtBetween(any(), any(), any())).thenReturn(List.of(eodSale));
+    when(saleLineRepository.findBySaleIn(any())).thenReturn(List.of(eodLine));
+    when(paymentRepository.findBySaleIdIn(any())).thenReturn(List.of(eodPay));
     when(returnRepository.findByCreatedAtBetween(any(), any())).thenReturn(List.of());
     when(shiftRepository.findByClosedAtBetween(any(), any())).thenReturn(List.of());
     when(accountingExporter.postToErpNext(any(), any(), any()))
